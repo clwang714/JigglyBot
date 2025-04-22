@@ -94,29 +94,29 @@ async def botscan(logger, guild, message):
     logger.info(f'{total} members scanned, {count} potential botters found in {guild}')
     logger.info('----------------------------------------------------------------------\n\n')
 
-async def forward_link(logger, output_channel, message):
-    output_header = ''
-    output_str = '##'
-    if message.embeds:
-        output_header = '# [' + message.embeds[0].title + '](' + message.embeds[0].url + ')\n'
-        output_str += '#'
-    output_str += ' ' + re.sub('<@&[0-9]*>', '', message.content)       #strip mentions
-    output_str = re.sub('\n', '\n### ', output_str)                     #header new lines
-    output_roles = f'### <@&{free_role}>'                                #free roles
-    for role in message.role_mentions:
-        if role.id in roles1 and roles2[roles1[role.id]] != -1:
-            output_roles += (' <@&' + str(roles2[roles1[role.id]]) + '>')
-    for domain in domain_roles:
-        if domain in message.content:
-            output_roles += (' <@&' + str(domain_roles[domain]) + '>')
-    if 'https://' in message.content and all(domain not in message.content for domain in domain_roles):
-        output_roles += (' <@&' + str(domain_roles['other_retailers']) + '>')
-    message_ids[(message.channel.id, message.id)] = (output_channel.id, (await output_channel.send(output_header + output_str + '\n' + output_roles + '\n**Sent by: <@' + str(message.author.id) + '>**')).id)
-    message_ids_rev[message_ids[(message.channel.id, message.id)]] = (message.channel.id, message.id)
-    logger.info('----------------------------------------------------------------------')
-    logger.info(f'Received msg from {message.channel}: {message.id}')
-    logger.info(f'Sending msg to {output_channel}: {message_ids[(message.channel.id, message.id)][1]}')
-    logger.info('----------------------------------------------------------------------\n\n')
+# async def forward_link(logger, output_channel, message):
+#     output_header = ''
+#     output_str = '##'
+#     if message.embeds:
+#         output_header = '# [' + message.embeds[0].title + '](' + message.embeds[0].url + ')\n'
+#         output_str += '#'
+#     output_str += ' ' + re.sub('<@&[0-9]*>', '', message.content)       #strip mentions
+#     output_str = re.sub('\n', '\n### ', output_str)                     #header new lines
+#     output_roles = f'### <@&{free_role}>'                                #free roles
+#     for role in message.role_mentions:
+#         if role.id in roles1 and roles2[roles1[role.id]] != -1:
+#             output_roles += (' <@&' + str(roles2[roles1[role.id]]) + '>')
+#     for domain in domain_roles:
+#         if domain in message.content:
+#             output_roles += (' <@&' + str(domain_roles[domain]) + '>')
+#     if 'https://' in message.content and all(domain not in message.content for domain in domain_roles):
+#         output_roles += (' <@&' + str(domain_roles['other_retailers']) + '>')
+#     message_ids[(message.channel.id, message.id)] = (output_channel.id, (await output_channel.send(output_header + output_str + '\n' + output_roles + '\n**Sent by: <@' + str(message.author.id) + '>**')).id)
+#     message_ids_rev[message_ids[(message.channel.id, message.id)]] = (message.channel.id, message.id)
+#     logger.info('----------------------------------------------------------------------')
+#     logger.info(f'Received msg from {message.channel}: {message.id}')
+#     logger.info(f'Sending msg to {output_channel}: {message_ids[(message.channel.id, message.id)][1]}')
+#     logger.info('----------------------------------------------------------------------\n\n')
 
 async def forward_link_embed(client, logger, output_channel, message, msg_str):
     if msg_str:
@@ -128,8 +128,12 @@ async def forward_link_embed(client, logger, output_channel, message, msg_str):
         logger.info('----------------------------------------------------------------------\n\n')
     else:
         (msg, embed) = await generate_embed_msg(client, logger, output_channel, message, '', '')
-        message_ids[(message.channel.id, message.id)] = (output_channel.id, (await output_channel.send(msg, embed=embed)).id)
-        message_ids_rev[message_ids[(message.channel.id, message.id)]] = (message.channel.id, message.id)
+        if (message.channel.id, message.id) not in message_ids:
+            message_ids[(message.channel.id, message.id)] = [(output_channel.id, (await output_channel.send(msg, embed=embed)).id)]
+            message_ids_rev[message_ids[(message.channel.id, message.id)][-1]] = (message.channel.id, message.id)
+        else:
+            message_ids[(message.channel.id, message.id)].append((output_channel.id, (await output_channel.send(msg, embed=embed)).id))
+            message_ids_rev[message_ids[(message.channel.id, message.id)][-1]] = (message.channel.id, message.id)
         logger.info('----------------------------------------------------------------------')
         logger.info(f'Received msg from {message.channel}: {message.id}')
         logger.info(f'Sending msg to {output_channel}: {message_ids[(message.channel.id, message.id)][1]}')
@@ -396,10 +400,10 @@ async def generate_embed_msg(client, logger, output_channel, message, msg_str, e
         "type": "rich"
     }
     panda_links_channel = client.get_channel(panda_links_id)
-    logger.info('----------------------------------------------------------------------')
-    logger.info(f'output_channel = {output_channel}')
-    logger.info(f'panda_channel = {panda_links_channel}')
-    logger.info('----------------------------------------------------------------------\n\n')
+    # logger.info('----------------------------------------------------------------------')
+    # logger.info(f'output_channel = {output_channel}')
+    # logger.info(f'panda_channel = {panda_links_channel}')
+    # logger.info('----------------------------------------------------------------------\n\n')
     # hardcoded panda forwarding, don't include any pings
     if output_channel == panda_links_channel:
         return (output_header+'\n'+message.jump_url, discord.Embed.from_dict(embed_dict))

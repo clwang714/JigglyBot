@@ -239,7 +239,7 @@ async def on_message(message):
             logger.info('----------------------------------------------------------------------')
             logger.info(f'Received msg from {message.author.display_name} in {message.channel}')
             logger.info('----------------------------------------------------------------------')
-            message_ids[(message.channel.id, message.id)] = None
+            message_ids[(message.channel.id, message.id)] = []
             await asyncio.sleep(120)        # wait 2 minutes before posting
 
             try:
@@ -254,8 +254,8 @@ async def on_message(message):
                 async with aiohttp.ClientSession() as session:
                     webhook = discord.Webhook.from_url(success_webhook, session=session)
                     new_msg = await webhook.send(content=message.content, embeds=message.embeds, files=[await attachment.to_file() for attachment in message.attachments], username=message.author.display_name, avatar_url=message.author.display_avatar.url, allowed_mentions=discord.AllowedMentions(everyone=False,users=False,roles=False), wait=True)
-                message_ids[(message.channel.id, message.id)] = (output_channel.id, new_msg.id)
-                message_ids_rev[message_ids[(message.channel.id, message.id)]] = (message.channel.id, message.id)
+                message_ids[(message.channel.id, message.id)] = [(output_channel.id, new_msg.id)]
+                message_ids_rev[message_ids[(message.channel.id, message.id)][-1]] = (message.channel.id, message.id)
                 logger.info('----------------------------------------------------------------------')
                 logger.info(f'Forwarding msg from {message.author.display_name} to {output_channel}')
                 logger.info('----------------------------------------------------------------------\n\n')
@@ -276,16 +276,16 @@ async def on_message(message):
                      await forward_link_embed(client, logger, channels[message.channel], message, '')
 
         #links only + test channel
-        elif message.channel.id in [links_deals_id, jigglytest_1]:
+        elif message.channel.id in [links_deals_id]:
             if 'https://' in message.content or message.role_mentions:
                 if any(domain in message.content for domain in whitelisted_domains) or any(role in message.author.roles for role in mod_roles):
                     msg_to_forward = await remove_tracking(logger, message.channel, message)
                     await forward_link_embed(client, logger, channels[message.channel], msg_to_forward, '')
                     # hardcoded panda link forwarding
                     # (easiest implementation without changing everything else)
-                    logger.info('----------------------------------------------------------------------')
-                    logger.info(f'panda_channel = {panda_links_channel}')
-                    logger.info('----------------------------------------------------------------------\n\n')
+                    # logger.info('----------------------------------------------------------------------')
+                    # logger.info(f'panda_channel = {panda_links_channel}')
+                    # logger.info('----------------------------------------------------------------------\n\n')
                     await forward_link_embed(client, logger, panda_links_channel, msg_to_forward, '')
 
 
@@ -302,11 +302,13 @@ async def on_message_edit(before, after):
     if message.channel.id in [links_deals_id, links_prem_id, test_channel_id]:
         for i in range(15):  # attempt for 3 seconds
             if (message.channel.id, message.id) in message_ids:
-                msg_to_edit = await channels[message.channel].fetch_message(message_ids[(message.channel.id,message.id)][1])
-                await update_link_embed(client, logger, channels[message.channel], message, msg_to_edit)
-                logger.info('----------------------------------------------------------------------')
-                logger.info(f'Incoming msg edited, editing outgoing msg: {msg_to_edit.channel.id, msg_to_edit.id}')
-                logger.info('----------------------------------------------------------------------\n\n')
+                for msg in message_ids[(message.channel.id,message.id)]:
+                    output_channel = client.get_channel(msg[0])
+                    msg_to_edit = await output_channel.fetch_message(msg[1])
+                    await update_link_embed(client, logger, channels[message.channel], message, msg_to_edit)
+                    logger.info('----------------------------------------------------------------------')
+                    logger.info(f'Incoming msg edited, editing outgoing msg: {output_channel.id, msg_to_edit.id}')
+                    logger.info('----------------------------------------------------------------------\n\n')
                 break
             await asyncio.sleep(.2)
 
@@ -325,12 +327,13 @@ async def on_message_delete(message):
     ###             BAD LINK / FAKE PINGS
     ###############################################
     if message.channel.id in channel_ids and message.channel.id not in [success_prem_id] and (message.channel.id,message.id) in message_ids:
-        output_channel = channels[message.channel]
-        msg_to_edit = await output_channel.fetch_message(message_ids[(message.channel.id,message.id)][1])
-        logger.info('----------------------------------------------------------------------')
-        await msg_to_edit.edit(content='### Link removed, sorry for fake ping', embed=None)
-        logger.info(f'Incoming link post deleted, editing outgoing msg: {message_ids[(message.channel.id,message.id)]}')
-        logger.info('----------------------------------------------------------------------\n\n')
+        for msg in message_ids[(message.channel.id,message.id)]:
+            output_channel = client.get_channel(msg[0])
+            msg_to_edit = await output_channel.fetch_message(msg[1])
+            logger.info('----------------------------------------------------------------------')
+            await msg_to_edit.edit(content='### Link removed, sorry for fake ping', embed=None)
+            logger.info(f'Incoming link post deleted, editing outgoing msg: {output_channel.id, msg_to_edit.id}')
+            logger.info('----------------------------------------------------------------------\n\n')
 
     ##############################################
     ###             DELETED SUCCESS POST
@@ -338,7 +341,7 @@ async def on_message_delete(message):
     if message.channel.id in [success_prem_id] and (message.channel.id,message.id) in message_ids:
         output_channel = channels[message.channel]
         try:
-            msg_to_delete = await output_channel.fetch_message(message_ids[(message.channel.id,message.id)][1])
+            msg_to_delete = await output_channel.fetch_message(message_ids[(message.channel.id,message.id)][-1][1])
             # del message_ids_rev[message_ids[(message.channel.id, message.id)]]
             del message_ids[(message.channel.id, message.id)]
             await msg_to_delete.delete()
@@ -401,20 +404,21 @@ async def on_reaction_add(reaction, user):
             if reaction.emoji not in reactions[reaction.message.channel.id][reaction.message.id]:
                 reactions[reaction.message.channel.id][reaction.message.id].append(reaction.emoji)
                 if reaction.message.channel in channels:
-                    try:
-                        output_channel = client.get_channel(message_ids[(reaction.message.channel.id, reaction.message.id)][0])
-                        msg_to_react = await output_channel.fetch_message(message_ids[(reaction.message.channel.id, reaction.message.id)][1])
-                        logger.info('----------------------------------------------------------------------')
-                        logger.info(f'Adding react: {reaction.emoji} from user {user.id} to forwarded msg: {reaction.message.id}')
-                        logger.info('----------------------------------------------------------------------\n\n')
-                    except (NameError, KeyError):
-                        pass
+                    for msg in message_ids[(reaction.message.channel.id, reaction.message.id)]:
+                        try:
+                            output_channel = client.get_channel(msg[0])
+                            msg_to_react = await output_channel.fetch_message(msg[1])
+                            logger.info('----------------------------------------------------------------------')
+                            logger.info(f'Adding react: {reaction.emoji} from user {user.id} to forwarded msg: {msg_to_react.id}')
+                            logger.info('----------------------------------------------------------------------\n\n')
+                        except (NameError, KeyError):
+                            pass
                 elif reaction.message.channel in channels_rev:
                     try:
                         output_channel = client.get_channel(message_ids_rev[(reaction.message.channel.id, reaction.message.id)][0])
                         msg_to_react = await output_channel.fetch_message(message_ids_rev[(reaction.message.channel.id, reaction.message.id)][1])
                         logger.info('----------------------------------------------------------------------')
-                        logger.info(f'Adding react: {reaction.emoji} from user {user.id} to original msg: {reaction.message.id}')
+                        logger.info(f'Adding react: {reaction.emoji} from user {user.id} to original msg: {msg_to_react.id}')
                         logger.info('----------------------------------------------------------------------\n\n')
                     except (NameError, KeyError):
                         pass
@@ -475,4 +479,3 @@ except discord.errors.HTTPException as e:
 
 
 
-    
