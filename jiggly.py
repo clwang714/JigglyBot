@@ -472,3 +472,7 @@ try:
     client.run(bot_token, log_handler=None)
 except discord.errors.HTTPException as e:
     print(e)
+
+
+
+    
