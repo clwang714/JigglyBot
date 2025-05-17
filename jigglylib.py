@@ -136,7 +136,7 @@ async def forward_link_embed(client, logger, output_channel, message, msg_str):
             message_ids_rev[message_ids[(message.channel.id, message.id)][-1]] = (message.channel.id, message.id)
         logger.info('----------------------------------------------------------------------')
         logger.info(f'Received msg from {message.channel}: {message.id}')
-        logger.info(f'Sending msg to {output_channel}: {message_ids[(message.channel.id, message.id)][1]}')
+        logger.info(f'Sending msg to {output_channel}: {message_ids[(message.channel.id, message.id)][-1][1]}')
         logger.info('----------------------------------------------------------------------\n\n')
 
 async def update_link_embed(client, logger, output_channel, message, msg_to_edit):
@@ -399,13 +399,47 @@ async def generate_embed_msg(client, logger, output_channel, message, msg_str, e
         "timestamp": str(datetime.datetime.now(timezone)),
         "type": "rich"
     }
-    panda_links_channel = client.get_channel(panda_links_id)
+    # panda_links_channel = client.get_channel(panda_links_id)
     # logger.info('----------------------------------------------------------------------')
-    # logger.info(f'output_channel = {output_channel}')
-    # logger.info(f'panda_channel = {panda_links_channel}')
+    # logger.info(f'output_channel = {output_channel.id}, type: {type(output_channel.id)}')
+    # logger.info(f'panda_channel = {panda_links_id}, type: {type(panda_links_id)}')
+    # logger.info(f'equal? {output_channel.id == panda_links_id}')
     # logger.info('----------------------------------------------------------------------\n\n')
     # hardcoded panda forwarding, don't include any pings
-    if output_channel == panda_links_channel:
+    if output_channel.id == panda_links_id:
         return (output_header+'\n'+message.jump_url, discord.Embed.from_dict(embed_dict))
     else:
         return (output_header+'\n'+output_roles, discord.Embed.from_dict(embed_dict))
+
+async def print_leaderboard(client, logger, message, channel):
+    output_str = '## <:espfetti:1350942179522121891> Code Card Leaderboards <:espfetti:1350942179522121891>\n```'
+    if message:
+        search_id = message.author.id
+
+    with open('random_data/code_card_leaderboard.json', 'r') as f:
+        leaderboard = json.load(f)
+        top_users = dict(sorted(leaderboard.items(), key=lambda item: item[1], reverse=True))
+        if message.mentions:
+            search_id = message.mentions[0].id
+            if str(search_id) not in leaderboard:
+                leaderboard[str(search_id)] = 0
+        count = 0
+        found = False
+        for (user, total) in top_users.items():
+            count += 1
+            found = (found or user == str(search_id))
+            if count <= leaderboard_count:
+                guild = client.get_guild(prem_id)
+                name = (await guild.fetch_member(user)).display_name
+                output_str += f'\n{count}. {name}{' '*(30-len(name)-len(str(count)))}|{' '*(4-len(str(total)))}{total}'
+                if count == leaderboard_count and found:
+                    break
+            elif count > leaderboard_count and found:
+                guild = client.get_guild(prem_id)
+                name = (await guild.fetch_member(user)).display_name
+                output_str += f'\n{' '*15}.\n{' '*15}.\n{count}. {name}{' '*(30-len(name)-len(str(count)))}|{' '*(4-len(str(total)))}{total}'
+                break
+            elif count > leaderboard_count:
+                pass
+
+    await channel.send(output_str+'\n```')
