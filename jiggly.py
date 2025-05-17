@@ -1,17 +1,14 @@
 import discord
 import logging
 import logging.handlers
-# import regex as re
 import aiofiles
 import aiohttp
 import asyncio
-# import json
 import datetime
-# import time
-# import zoneinfo
-# from dateutil.parser import parse
-# from dateutil.tz import gettz
-# from pytz import timezone
+from qreader import QReader
+import cv2
+import numpy as np
+import json
 
 from jigglyglobals import *
 from jigglylib import *
@@ -123,9 +120,15 @@ async def on_message(message):
         await generate_timestamp(logger, message)
 
     #####################################################
+    ###             CODE CARD LEADERBOARD
+    #####################################################
+    elif '!leaderboard' in message.content:
+        await print_leaderboard(client, logger, message, message.channel)
+
+    #####################################################
     ###                 BOT CATCHER
     #####################################################
-    if message.content.startswith('!botscan ') and (message.channel.id == dm_channel_id or any(role in message.author.roles for role in mod_roles)):
+    elif message.content.startswith('!botscan ') and (message.channel.id == dm_channel_id or any(role in message.author.roles for role in mod_roles)):
         if 'deals' in message.content:
             await botscan(logger, client.get_guild(deals_id), message)
         elif 'premium' in message.content:
@@ -140,6 +143,44 @@ async def on_message(message):
         if message.content.startswith('!say '):
             await send_message(logger, client.get_channel(int(message.content.split()[1])), message)
 
+        if message.attachments and 'qr' in message.content:
+            output_channel = message.channel
+            qreader = QReader()
+            for attachment in message.attachments:
+                nparr = np.frombuffer((await attachment.read()), np.uint8)
+                image=cv2.imdecode(nparr, cv2.IMREAD_UNCHANGED)
+
+                output_str = ''
+                results = qreader.detect_and_decode(image=image)
+                logger.info('--------------------------------------------------------')
+
+                with open('random_data/codes.json', 'r+') as f:
+                    codes = json.load(f)
+                    for result in results:
+                        if result and result not in codes:
+                            codes.append(result)
+                            logger.info(f'{result}')
+                            output_str += '\n' + result.replace('-','')
+                    f.seek(0)
+                    f.write(json.dumps(codes))
+
+                with open('random_data/code_card_leaderboard.json', 'r+') as f:
+                    leaderboard = json.load(f)
+                    if str(message.author.id) in leaderboard:
+                        leaderboard[str(message.author.id)] += output_str.count('\n')
+                    else:
+                        leaderboard[str(message.author.id)] = output_str.count('\n')
+                    f.seek(0)
+                    f.write(json.dumps(leaderboard))
+                    if len(results) == output_str.count('\n'):
+                        await output_channel.send(f'## <:espfetti:1350942179522121891> Thank you <@{message.author.id}> for submitting {output_str.count('\n')} codes! <a:sylvekiss:1364084379726643262>\n### Your total: {leaderboard[str(message.author.id)]} codes <a:sylvesip_gif:1364082945811288115>{output_str}', silent=True)
+                    elif output_str.count('\n') == 0:
+                        await output_channel.send(f'### <@{message.author.id}> Oops, those codes have been submitted already! <a:sylvesip_gif:1364082945811288115>', silent=True)
+                    else:
+                        await output_channel.send(f'## <:espfetti:1350942179522121891> Thank you <@{message.author.id}> for submitting {len(results)} codes! <a:sylvekiss:1364084379726643262>\n### But {len(results)-output_str.count('\n')} codes were submitted already <a:eeveeslap:1352484159485902859>\n ### Your total: {leaderboard[str(message.author.id)]} codes <a:sylvesip_gif:1364082945811288115>{output_str}', silent=True)
+                    logger.info(f'{len(results)} QR codes detected from {message.author.display_name} (Total: {leaderboard[str(message.author.id)]})')
+                logger.info(f'{output_str.count('\n')} codes sent to {output_channel}')
+                logger.info('--------------------------------------------------------\n\n')
         # elif message.content.startswith('!copy contents'):
         #     input_channel = client.get_guild(deals_id).get_thread(1345099806221144217)
         #     output_channel = client.get_channel(1351635196574957660)
@@ -215,6 +256,68 @@ async def on_message(message):
     if message.channel.id in channel_ids:
 
         #####################################################
+        ###                      QR CODES
+        #####################################################
+        if message.channel.id in [qr_input_id] and message.attachments:
+            global code_subs
+            output_channel = channels[message.channel]
+            qreader = QReader()
+            for attachment in message.attachments:
+                nparr = np.frombuffer((await attachment.read()), np.uint8)
+                image=cv2.imdecode(nparr, cv2.IMREAD_UNCHANGED)
+
+                output_str = ''
+                results = qreader.detect_and_decode(image=image)
+                results = [result for result in results if result]
+                if not results:
+                    logger.info('--------------------------------------------------------')
+                    logger.info(f'Image received in {message.channel} but no QR codes found')
+                    logger.info('--------------------------------------------------------')
+                    return
+                logger.info('--------------------------------------------------------')
+
+                with open('random_data/codes.json', 'r+') as f:
+                    codes = json.load(f)
+                    for result in results:
+                        if result not in codes:
+                            codes.append(result)
+                            logger.info(f'{result}')
+                            output_str += '\n' + result.replace('-','')
+                    f.seek(0)
+                    f.write(json.dumps(codes))
+
+                with open('random_data/code_card_leaderboard.json', 'r+') as f:
+                    leaderboard = json.load(f)
+                    if str(message.author.id) in leaderboard:
+                        leaderboard[str(message.author.id)] += output_str.count('\n')
+                    else:
+                        leaderboard[str(message.author.id)] = output_str.count('\n')
+                    f.seek(0)
+                    f.write(json.dumps(leaderboard))
+                    if output_str.count('\n') == 0:
+                        await output_channel.send(f'### <@{message.author.id}> Thanks, but those codes have been submitted already! <a:eeveeslap:1352484159485902859>', silent=True)
+                    elif len(results) == output_str.count('\n'):
+                        new_msg = await output_channel.send(f'## <:espfetti:1350942179522121891> Thank you <@{message.author.id}> for submitting {output_str.count('\n')} codes! <a:sylvekiss:1364084379726643262>\n### Your total: {leaderboard[str(message.author.id)]} codes <a:sylvesip_gif:1364082945811288115>{output_str}', silent=True)
+                        message_ids[(message.channel.id, message.id)] = [(output_channel.id, new_msg.id)]
+                        message_ids_rev[message_ids[(message.channel.id, message.id)][-1]] = (message.channel.id, message.id)
+                        code_subs += 1
+                    else:
+                        new_msg = await output_channel.send(f'## <:espfetti:1350942179522121891> Thank you <@{message.author.id}> for submitting {len(results)} codes! <a:sylvekiss:1364084379726643262>\n### But {len(results)-output_str.count('\n')} codes were submitted already <a:leafeongiggle:1352483452376711249>\n ### Your total: {leaderboard[str(message.author.id)]} codes <a:sylvesip_gif:1364082945811288115>{output_str}', silent=True)
+                        message_ids[(message.channel.id, message.id)] = [(output_channel.id, new_msg.id)]
+                        message_ids_rev[message_ids[(message.channel.id, message.id)][-1]] = (message.channel.id, message.id)
+                        code_subs += 1
+                    logger.info(f'{len(results)} QR codes detected from {message.author.display_name} (Total: {leaderboard[str(message.author.id)]})')
+                logger.info(f'{output_str.count('\n')} codes sent to {output_channel}')
+                # logger.info(f'{15-code_subs} messages remaining until leaderboard output')
+                # logger.info('--------------------------------------------------------\n\n')
+                # if code_subs == 15:
+                #     await print_leaderboard(client, logger, None, message.channel)
+                #     code_subs = 0
+                #     logger.info('--------------------------------------------------------')
+                #     logger.info(f'Printing leaderboard')
+                #     logger.info('--------------------------------------------------------\n\n')
+
+        #####################################################
         ###             CONTENTS CHANNEL FORWARDING
         #####################################################
         if message.channel.id in [contents_deals_id, contents_prem_id] and discord.MessageType.default and not message.thread:
@@ -239,7 +342,7 @@ async def on_message(message):
             logger.info('----------------------------------------------------------------------')
             logger.info(f'Received msg from {message.author.display_name} in {message.channel}')
             logger.info('----------------------------------------------------------------------')
-            message_ids[(message.channel.id, message.id)] = None
+            message_ids[(message.channel.id, message.id)] = []
             await asyncio.sleep(120)        # wait 2 minutes before posting
 
             try:
@@ -253,9 +356,9 @@ async def on_message(message):
             if (message.channel.id, message.id) in message_ids:     #if message hasn't been deleted
                 async with aiohttp.ClientSession() as session:
                     webhook = discord.Webhook.from_url(success_webhook, session=session)
-                    new_msg = await webhook.send(content=message.content, embeds=message.embeds, files=[await attachment.to_file() for attachment in message.attachments], username=message.author.display_name, avatar_url=message.author.display_avatar.url, allowed_mentions=discord.AllowedMentions(everyone=False,users=False,roles=False), wait=True)
-                message_ids[(message.channel.id, message.id)] = (output_channel.id, new_msg.id)
-                message_ids_rev[message_ids[(message.channel.id, message.id)]] = (message.channel.id, message.id)
+                    new_msg = await webhook.send(content=message.content, embeds=message.embeds, files=[await attachment.to_file() for attachment in message.attachments], username="Gotta Ping 'Em All", avatar_url=pfp_url, allowed_mentions=discord.AllowedMentions(everyone=False,users=False,roles=False), wait=True)
+                message_ids[(message.channel.id, message.id)] = [(output_channel.id, new_msg.id)]
+                message_ids_rev[message_ids[(message.channel.id, message.id)][-1]] = (message.channel.id, message.id)
                 logger.info('----------------------------------------------------------------------')
                 logger.info(f'Forwarding msg from {message.author.display_name} to {output_channel}')
                 logger.info('----------------------------------------------------------------------\n\n')
@@ -276,17 +379,21 @@ async def on_message(message):
                      await forward_link_embed(client, logger, channels[message.channel], message, '')
 
         #links only + test channel
-        elif message.channel.id in [links_deals_id, jigglytest_1]:
-            if 'https://' in message.content or message.role_mentions:
+        elif message.channel.id in [links_deals_id]:
+            if ('https://' in message.content and 'https://tenor.com' not in message.content) or message.role_mentions:
                 if any(domain in message.content for domain in whitelisted_domains) or any(role in message.author.roles for role in mod_roles):
+                    # filter out overpriced posters
+                    if not any(role in message.author.roles for role in mod_roles) and 'target.com' in message.content and any(item in message.content for item in over_msrp):
+                        await message.delete()
+                        await client.get_channel(target_id).send(f'### <@{message.author.id}> Please check MSRP before you post!')
+                        return
+
                     msg_to_forward = await remove_tracking(logger, message.channel, message)
                     await forward_link_embed(client, logger, channels[message.channel], msg_to_forward, '')
                     # hardcoded panda link forwarding
                     # (easiest implementation without changing everything else)
-                    logger.info('----------------------------------------------------------------------')
-                    logger.info(f'panda_channel = {panda_links_channel}')
-                    logger.info('----------------------------------------------------------------------\n\n')
-                    await forward_link_embed(client, logger, panda_links_channel, msg_to_forward, '')
+                    if ('https://' in message.content and 'https://tenor.com' not in message.content):
+                        await forward_link_embed(client, logger, panda_links_channel, msg_to_forward, '')
 
 
 ##############################################
@@ -302,11 +409,16 @@ async def on_message_edit(before, after):
     if message.channel.id in [links_deals_id, links_prem_id, test_channel_id]:
         for i in range(15):  # attempt for 3 seconds
             if (message.channel.id, message.id) in message_ids:
-                msg_to_edit = await channels[message.channel].fetch_message(message_ids[(message.channel.id,message.id)][1])
-                await update_link_embed(client, logger, channels[message.channel], message, msg_to_edit)
-                logger.info('----------------------------------------------------------------------')
-                logger.info(f'Incoming msg edited, editing outgoing msg: {msg_to_edit.channel.id, msg_to_edit.id}')
-                logger.info('----------------------------------------------------------------------\n\n')
+                for msg in message_ids[(message.channel.id,message.id)]:
+                    output_channel = client.get_channel(msg[0])
+                    try:
+                        msg_to_edit = await output_channel.fetch_message(msg[1])
+                        await update_link_embed(client, logger, output_channel, message, msg_to_edit)
+                        logger.info('----------------------------------------------------------------------')
+                        logger.info(f'Incoming msg edited, editing outgoing msg: {output_channel.id, msg_to_edit.id}')
+                        logger.info('----------------------------------------------------------------------\n\n')
+                    except Exception as e:
+                        pass
                 break
             await asyncio.sleep(.2)
 
@@ -324,13 +436,23 @@ async def on_message_delete(message):
     ##############################################
     ###             BAD LINK / FAKE PINGS
     ###############################################
-    if message.channel.id in channel_ids and message.channel.id not in [success_prem_id] and (message.channel.id,message.id) in message_ids:
-        output_channel = channels[message.channel]
-        msg_to_edit = await output_channel.fetch_message(message_ids[(message.channel.id,message.id)][1])
-        logger.info('----------------------------------------------------------------------')
-        await msg_to_edit.edit(content='### Link removed, sorry for fake ping', embed=None)
-        logger.info(f'Incoming link post deleted, editing outgoing msg: {message_ids[(message.channel.id,message.id)]}')
-        logger.info('----------------------------------------------------------------------\n\n')
+    if message.channel.id in channel_ids and message.channel.id not in [success_prem_id, qr_input_id] and (message.channel.id,message.id) in message_ids:
+        for msg in message_ids[(message.channel.id,message.id)]:
+            output_channel = client.get_channel(msg[0])
+            msg_to_edit = await output_channel.fetch_message(msg[1])
+            logger.info('----------------------------------------------------------------------')
+            await msg_to_edit.edit(content='### Link removed, sorry for fake ping', embed=None)
+            logger.info(f'Incoming link post deleted, editing outgoing msg: {output_channel.id, msg_to_edit.id}')
+            logger.info('----------------------------------------------------------------------\n\n')
+
+    if message.channel.id in [qr_input_id] and (message.channel.id,message.id) in message_ids:
+        for msg in message_ids[(message.channel.id,message.id)]:
+            output_channel = client.get_channel(msg[0])
+            msg_to_del = await output_channel.fetch_message(msg[1])
+            logger.info('----------------------------------------------------------------------')
+            await msg_to_del.delete()
+            logger.info(f'Incoming QR code deleted, editing outgoing msg: {output_channel.id, msg_to_del.id}')
+            logger.info('----------------------------------------------------------------------\n\n')
 
     ##############################################
     ###             DELETED SUCCESS POST
@@ -338,7 +460,7 @@ async def on_message_delete(message):
     if message.channel.id in [success_prem_id] and (message.channel.id,message.id) in message_ids:
         output_channel = channels[message.channel]
         try:
-            msg_to_delete = await output_channel.fetch_message(message_ids[(message.channel.id,message.id)][1])
+            msg_to_delete = await output_channel.fetch_message(message_ids[(message.channel.id,message.id)][-1][1])
             # del message_ids_rev[message_ids[(message.channel.id, message.id)]]
             del message_ids[(message.channel.id, message.id)]
             await msg_to_delete.delete()
@@ -402,26 +524,25 @@ async def on_reaction_add(reaction, user):
                 reactions[reaction.message.channel.id][reaction.message.id].append(reaction.emoji)
                 if reaction.message.channel in channels:
                     try:
-                        output_channel = client.get_channel(message_ids[(reaction.message.channel.id, reaction.message.id)][0])
-                        msg_to_react = await output_channel.fetch_message(message_ids[(reaction.message.channel.id, reaction.message.id)][1])
-                        logger.info('----------------------------------------------------------------------')
-                        logger.info(f'Adding react: {reaction.emoji} from user {user.id} to forwarded msg: {reaction.message.id}')
-                        logger.info('----------------------------------------------------------------------\n\n')
-                    except (NameError, KeyError):
+                        for msg in message_ids[(reaction.message.channel.id, reaction.message.id)]:
+                            output_channel = client.get_channel(msg[0])
+                            msg_to_react = await output_channel.fetch_message(msg[1])
+                            await msg_to_react.add_reaction(reaction.emoji)
+                            logger.info('----------------------------------------------------------------------')
+                            logger.info(f'Adding react: {reaction.emoji} from user {user.id} to forwarded msg: {msg_to_react.id}')
+                            logger.info('----------------------------------------------------------------------\n\n')
+                    except (NameError, KeyError, AttributeError):
                         pass
-                elif reaction.message.channel in channels_rev:
+                elif reaction.message.channel in channels_rev and reaction.message.channel.id != panda_links_id:
                     try:
                         output_channel = client.get_channel(message_ids_rev[(reaction.message.channel.id, reaction.message.id)][0])
                         msg_to_react = await output_channel.fetch_message(message_ids_rev[(reaction.message.channel.id, reaction.message.id)][1])
+                        await msg_to_react.add_reaction(reaction.emoji)
                         logger.info('----------------------------------------------------------------------')
-                        logger.info(f'Adding react: {reaction.emoji} from user {user.id} to original msg: {reaction.message.id}')
+                        logger.info(f'Adding react: {reaction.emoji} from user {user.id} to original msg: {msg_to_react.id}')
                         logger.info('----------------------------------------------------------------------\n\n')
-                    except (NameError, KeyError):
+                    except (NameError, KeyError, AttributeError):
                         pass
-                try:
-                    await msg_to_react.add_reaction(reaction.emoji)
-                except (NameError, AttributeError):
-                    pass
 
     ##############################################
     ###             REACTION LOGGING
@@ -429,9 +550,9 @@ async def on_reaction_add(reaction, user):
     async with aiofiles.open('../react_logs/log.json', 'a', encoding="utf-8") as f:
         output_str = ''
         if isinstance(reaction.emoji, str):
-            output_str = '{"react": "' + reaction.emoji + '", "name": "' + str(user.display_name) + '", "username": "' + user.name + '", "time": "' + str(datetime.datetime.now().replace(microsecond=0)) + '", "user_id": '+ str(user.id) + ', "guild": ' + str(reaction.message.channel.guild) + ', "channel": ' + str(reaction.message.channel) + ', "message_id": ' + str(reaction.message.id) + '}\n'
+            output_str = '{"react": "' + reaction.emoji + '", "emoji_id": "' + str(reaction.emoji.id) + '", "name": "' + str(user.display_name) + '", "username": "' + user.name + '", "time": "' + str(datetime.datetime.now().replace(microsecond=0)) + '", "user_id": '+ str(user.id) + ', "guild": ' + str(reaction.message.channel.guild) + ', "channel": ' + str(reaction.message.channel) + ', "message_url": ' + str(reaction.message.jump_url) + '}\n'
         else:
-            output_str = '{"react": "' + reaction.emoji.name + '", "name": "' + str(user.display_name) + '", "username": "' + user.name +  '", "time": "' + str(datetime.datetime.now().replace(microsecond=0)) + '", "user_id": '+ str(user.id) + ', "guild": ' + str(reaction.message.channel.guild) + ', "channel": ' + str(reaction.message.channel) + ', "message_id": ' + str(reaction.message.id) + '}\n'
+            output_str = '{"react": "' + reaction.emoji.name + '", "emoji_id": "' + str(reaction.emoji.id) + '", "name": "' + str(user.display_name) + '", "username": "' + user.name +  '", "time": "' + str(datetime.datetime.now().replace(microsecond=0)) + '", "user_id": '+ str(user.id) + ', "guild": ' + str(reaction.message.channel.guild) + ', "channel": ' + str(reaction.message.channel) + ', "message_url": ' + str(reaction.message.jump_url) + '}\n'
         await f.write(output_str)
 
 
@@ -472,3 +593,6 @@ try:
     client.run(bot_token, log_handler=None)
 except discord.errors.HTTPException as e:
     print(e)
+
+
+
