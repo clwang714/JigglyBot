@@ -431,13 +431,17 @@ async def print_leaderboard(client, logger, message, channel):
             if count <= leaderboard_count:
                 guild = client.get_guild(prem_id)
                 name = (await guild.fetch_member(user)).display_name
-                output_str += f'\n{count}. {name}{' '*(30-len(name)-len(str(count)))}|{' '*(4-len(str(total)))}{total}'
+                output_str += f'\n{count}. {name}{' '*(31-len(name)-len(str(count)))}|{' '*(4-len(str(total)))}{total}'
+                if '⚡' in name:
+                    output_str = output_str.replace('                        ', '                       ')
                 if count == leaderboard_count and found:
                     break
             elif count > leaderboard_count and found:
                 guild = client.get_guild(prem_id)
                 name = (await guild.fetch_member(user)).display_name
-                output_str += f'\n{' '*15}.\n{' '*15}.\n{count}. {name}{' '*(30-len(name)-len(str(count)))}|{' '*(4-len(str(total)))}{total}'
+                output_str += f'\n{' '*15}.\n{' '*15}.\n{count}. {name}{' '*(31-len(name)-len(str(count)))}|{' '*(4-len(str(total)))}{total}'
+                if '⚡' in name:
+                    output_str = output_str.replace('                        ', '                       ')
                 break
             elif count > leaderboard_count:
                 pass
