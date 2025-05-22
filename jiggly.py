@@ -58,9 +58,11 @@ async def on_ready():
     global deals_logging_output
     global prem_logging_output
     global panda_links_channel
+    global panda_jiggly_channel
     deals_logging_output = client.get_channel(deals_logging_output_id)
     prem_logging_output = client.get_channel(prem_logging_output_id)
     panda_links_channel = client.get_channel(panda_links_id)
+    panda_jiggly_channel = client.get_channel(panda_jiggly_channel_id)
 
     for (guild, channel) in archive_channel_ids.items():
         archive_channels[guild] = client.get_channel(channel)
@@ -109,6 +111,7 @@ async def on_ready():
 ###############################################
 @client.event
 async def on_message(message):
+    global users_to_monitor
     if message.author == client.user:           # ignore self just in case
         return
 
@@ -135,6 +138,42 @@ async def on_message(message):
             await botscan(logger, client.get_guild(prem_id), message)
         elif 'panda' in message.content:
             await botscan(logger, client.get_guild(panda_id), message)
+
+    #####################################################
+    ###                 PANDA ALERTS
+    #####################################################
+    elif (message.content.startswith('!useralert ') and (message.channel.id == panda_jiggly_channel_id or message.channel.id == dm_channel_id)) or (str(message.author.id) in users_to_monitor and message.guild.id == panda_id):
+        with open('random_data/user_alerts.json', 'r+') as f:
+            users_to_monitor = json.load(f)
+
+            if (message.content.startswith('!useralert ') and (message.channel.id == panda_jiggly_channel_id or message.channel.id == dm_channel_id)):
+                user_ids = message.content.split()[1:]
+                for user_id in user_ids:
+                    if user_id not in users_to_monitor:
+                        users_to_monitor[user_id] = [message.author.id]
+                        await message.reply(f'### Enabled alerts for user {await client.get_guild(panda_id).fetch_member(user_id)}', silent=True)
+                    elif message.author.id not in users_to_monitor[user_id]:
+                        users_to_monitor[user_id].append(message.author.id)
+                        await message.reply(f'### Enabled alerts for user {await client.get_guild(panda_id).fetch_member(user_id)}', silent=True)
+                    elif message.author.id in users_to_monitor[user_id]:
+                        users_to_monitor[user_id].remove(message.author.id)
+                        if not users_to_monitor[user_id]:
+                            del users_to_monitor[user_id]
+                        await message.reply(f'### Disabled alerts for user {await client.get_guild(panda_id).fetch_member(user_id)}', silent=True)
+                f.truncate(0)
+                f.seek(0)
+                f.write(json.dumps(users_to_monitor))
+                logger.info('--------------------------------------------------------')
+                logger.info('Monitored Users')
+                logger.info(users_to_monitor)
+                logger.info('--------------------------------------------------------\n\n')
+
+            elif str(message.author.id) in users_to_monitor and message.guild.id == panda_id:
+                output_str = f'Message from <@{message.author.id}>: {message.jump_url}'
+                for user_to_alert in users_to_monitor[str(message.author.id)]:
+                    output_str = f'<@{user_to_alert}> ' + output_str
+                await panda_jiggly_channel.send('### ' + output_str, silent=True)
+
 
     ################################################
     ###                 DM COMMANDS
@@ -170,6 +209,7 @@ async def on_message(message):
                         leaderboard[str(message.author.id)] += output_str.count('\n')
                     else:
                         leaderboard[str(message.author.id)] = output_str.count('\n')
+                    f.truncate(0)
                     f.seek(0)
                     f.write(json.dumps(leaderboard))
                     if len(results) == output_str.count('\n'):
@@ -550,9 +590,9 @@ async def on_reaction_add(reaction, user):
     async with aiofiles.open('../react_logs/log.json', 'a', encoding="utf-8") as f:
         output_str = ''
         if isinstance(reaction.emoji, str):
-            output_str = '{"react": "' + reaction.emoji + '", "emoji_id": "' + str(reaction.emoji.id) + '", "name": "' + str(user.display_name) + '", "username": "' + user.name + '", "time": "' + str(datetime.datetime.now().replace(microsecond=0)) + '", "user_id": '+ str(user.id) + ', "guild": ' + str(reaction.message.channel.guild) + ', "channel": ' + str(reaction.message.channel) + ', "message_url": ' + str(reaction.message.jump_url) + '}\n'
+            output_str = '{"react": "' + reaction.emoji + '", "name": "' + str(user.display_name) + '", "username": "' + user.name + '", "time": "' + str(datetime.datetime.now().replace(microsecond=0)) + '", "user_id": '+ str(user.id) + ', "guild": ' + str(reaction.message.channel.guild) + ', "channel": ' + str(reaction.message.channel) + ', "message_url": ' + str(reaction.message.jump_url) + '}\n'
         else:
-            output_str = '{"react": "' + reaction.emoji.name + '", "emoji_id": "' + str(reaction.emoji.id) + '", "name": "' + str(user.display_name) + '", "username": "' + user.name +  '", "time": "' + str(datetime.datetime.now().replace(microsecond=0)) + '", "user_id": '+ str(user.id) + ', "guild": ' + str(reaction.message.channel.guild) + ', "channel": ' + str(reaction.message.channel) + ', "message_url": ' + str(reaction.message.jump_url) + '}\n'
+            output_str = '{"react": "' + reaction.emoji.name + '", "name": "' + str(user.display_name) + '", "username": "' + user.name +  '", "time": "' + str(datetime.datetime.now().replace(microsecond=0)) + '", "user_id": '+ str(user.id) + ', "guild": ' + str(reaction.message.channel.guild) + ', "channel": ' + str(reaction.message.channel) + ', "message_url": ' + str(reaction.message.jump_url) + '}\n'
         await f.write(output_str)
 
 
