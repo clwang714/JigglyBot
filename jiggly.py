@@ -50,17 +50,19 @@ async def on_ready():
         channels[client.get_channel(input)] = client.get_channel(output)
         channels_rev[client.get_channel(output)] = client.get_channel(input)
 
-    for id in deals_mod_role_ids:
-        mod_roles.append(client.get_guild(deals_id).get_role(id))
-    for id in prem_mod_role_ids:
-        mod_roles.append(client.get_guild(prem_id).get_role(id))
+    # for id in deals_mod_role_ids:
+    #     mod_roles.append(client.get_guild(deals_id).get_role(id))
+    # for id in prem_mod_role_ids:
+    #     mod_roles.append(client.get_guild(prem_id).get_role(id))
 
     global deals_logging_output
     global prem_logging_output
+    global jiggly_logging_output
     global panda_links_channel
     global panda_jiggly_channel
     deals_logging_output = client.get_channel(deals_logging_output_id)
     prem_logging_output = client.get_channel(prem_logging_output_id)
+    jiggly_logging_output = client.get_channel(jiggly_logging_output_id)
     panda_links_channel = client.get_channel(panda_links_id)
     panda_jiggly_channel = client.get_channel(panda_jiggly_channel_id)
 
@@ -94,9 +96,10 @@ async def on_ready():
         logger.info(f'Logging deleted messages from {client.get_guild(deals_id)} in:       {deals_logging_output.guild} - {deals_logging_output}')
     if prem_logging_output:
         logger.info(f'Logging deleted messages from {prem_logging_output.guild} in: {prem_logging_output.guild} - {prem_logging_output}')
+    if jiggly_logging_output:
+        logger.info(f'Logging deleted messages from {jiggly_logging_output.guild} in: {jiggly_logging_output.guild} - {jiggly_logging_output}')
     logger.info('')
     for (guild, channel) in archive_channels.items():
-
         logger.info(f'Archiving media logs for {client.get_guild(guild).name} in: {' '*(18-len(client.get_guild(guild).name))}{archive_channels[guild]}')
     logger.info('')
     for channel in bot_channels:
@@ -172,7 +175,7 @@ async def on_message(message):
                 output_str = f'Message from <@{message.author.id}>: {message.jump_url}'
                 for user_to_alert in users_to_monitor[str(message.author.id)]:
                     output_str = f'<@{user_to_alert}> ' + output_str
-                await panda_jiggly_channel.send('### ' + output_str, silent=True)
+                await panda_jiggly_channel.send('### ' + output_str)
 
 
     ################################################
@@ -521,6 +524,8 @@ async def on_message_delete(message):
             await log_message(client, logger, deals_logging_output, message, 'default')
         elif message.channel.category_id in prem_logging_category_ids or message.channel.id in prem_logging_channel_ids:
             await log_message(client, logger, prem_logging_output, message, 'default')
+        elif message.channel.category_id in jiggly_logging_category_ids or message.channel.id in jiggly_logging_channel_ids:
+            await log_message(client, logger, jiggly_logging_output, message, 'default')
 
 #####################################################
 ###                BULK DELETE LOGS
@@ -532,6 +537,8 @@ async def on_bulk_message_delete(messages):
             await log_message(client, logger, deals_logging_output, message, 'bulk')
         elif message.channel.category_id in prem_logging_category_ids or message.channel.id in prem_logging_channel_ids:
             await log_message(client, logger, prem_logging_output, message, 'bulk')
+        elif message.channel.category_id in jiggly_logging_category_ids or message.channel.id in jiggly_logging_channel_ids:
+            await log_message(client, logger, jiggly_logging_output, message, 'bulk')
 
 @client.event
 async def on_raw_bulk_message_delete(payload):
@@ -539,6 +546,8 @@ async def on_raw_bulk_message_delete(payload):
         await log_message(client, logger, deals_logging_output, payload, 'bulk_info')
     elif client.get_channel(payload.channel_id).category_id in prem_logging_category_ids or payload.channel_id in prem_logging_channel_ids:
         await log_message(client, logger, prem_logging_output, payload, 'bulk_info')
+    elif client.get_channel(payload.channel_id).category_id in jiggly_logging_category_ids or payload.channel_id in jiggly_logging_channel_ids:
+        await log_message(client, logger, jiggly_logging_output, payload, 'bulk_info')
 
 
 ##############################################
@@ -603,7 +612,7 @@ async def on_reaction_add(reaction, user):
 @client.event
 async def on_presence_update(before, after):
     member = after
-    if member.activities and (any((bot_name in activity.name.lower() and all(app_name not in activity.name.lower() for app_name in whitelisted_apps)) for activity in list(member.activities) for bot_name in bot_names)
+    if member.activities and member.id not in whitelisted_users and (any((bot_name in activity.name.lower() and all(app_name not in activity.name.lower() for app_name in whitelisted_apps)) for activity in list(member.activities) for bot_name in bot_names)
     or any((hasattr(activity, 'application_id') and bot_id == activity.application_id) for activity in list(member.activities) for bot_id in bot_ids)):
         await botter_alert(logger, member)
 
