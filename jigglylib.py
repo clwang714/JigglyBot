@@ -412,7 +412,9 @@ async def generate_embed_msg(client, logger, output_channel, message, msg_str, e
         return (output_header+'\n'+output_roles, discord.Embed.from_dict(embed_dict))
 
 async def print_leaderboard(client, logger, message, channel):
-    output_str = '## <:espfetti:1350942179522121891> Code Card Leaderboards <:espfetti:1350942179522121891>\n```'
+    logger.info('----------------------------------------------------------------------')
+    logger.info('Printing Leaderboard')
+    output_str = '## <:espfetti:1384741067525455952> Code Card Leaderboards <:espfetti:1384741067525455952>\n```'
     if message:
         search_id = message.author.id
 
@@ -429,21 +431,37 @@ async def print_leaderboard(client, logger, message, channel):
             count += 1
             found = (found or user == str(search_id))
             if count <= leaderboard_count:
-                guild = client.get_guild(prem_id)
-                name = (await guild.fetch_member(user)).display_name
+                guild = client.get_guild(jiggly_id)
+                name = ''
+                try:
+                    name = (await guild.fetch_member(user)).display_name
+                except Exception as e:
+                    logger.info('')
+                    logger.info(f'User {user} not found, skipping')
+                    count -= 1
+                    continue
                 output_str += f'\n{count}. {name}{' '*(31-len(name)-len(str(count)))}|{' '*(4-len(str(total)))}{total}'
                 if '⚡' in name:
                     output_str = output_str.replace('                        ', '                       ')
                 if count == leaderboard_count and found:
                     break
             elif count > leaderboard_count and found:
-                guild = client.get_guild(prem_id)
+                guild = client.get_guild(jiggly_id)
                 name = (await guild.fetch_member(user)).display_name
                 output_str += f'\n{' '*15}.\n{' '*15}.\n{count}. {name}{' '*(31-len(name)-len(str(count)))}|{' '*(4-len(str(total)))}{total}'
                 if '⚡' in name:
                     output_str = output_str.replace('                        ', '                       ')
                 break
             elif count > leaderboard_count:
+                guild = client.get_guild(jiggly_id)
+                name = ''
+                try:
+                    name = (await guild.fetch_member(user)).display_name
+                except Exception as e:
+                    logger.info('')
+                    logger.info(f'User {user} not found, skipping')
+                    count -= 1
+                    continue
                 pass
-
     await channel.send(output_str+'\n```')
+    logger.info('----------------------------------------------------------------------')
