@@ -10,6 +10,7 @@ import cv2
 import numpy as np
 import json
 import regex as re
+from copy import deepcopy
 
 from jigglyglobals import *
 from jigglylib import *
@@ -61,15 +62,15 @@ async def on_ready():
     global jiggly_logging_output
     global panda_links_channel
     global panda_jiggly_channel
-    global panda2_input_channel
-    global panda2_output_channel
+    global panda_anime_input_channel
+    global panda_anime_output_channel
     deals_logging_output = client.get_channel(deals_logging_output_id)
     prem_logging_output = client.get_channel(prem_logging_output_id)
     jiggly_logging_output = client.get_channel(jiggly_logging_output_id)
     panda_links_channel = client.get_channel(panda_links_id)
     panda_jiggly_channel = client.get_channel(panda_jiggly_channel_id)
-    panda2_input_channel = client.get_channel(panda2_input_id)
-    panda2_output_channel = client.get_channel(panda2_output_id)
+    panda_anime_input_channel = client.get_channel(panda_anime_input_id)
+    panda_anime_output_channel = client.get_channel(panda_anime_output_id)
 
     for (guild, channel) in archive_channel_ids.items():
         archive_channels[guild] = client.get_channel(channel)
@@ -96,8 +97,8 @@ async def on_ready():
     logger.info('')
     if panda_links_channel:
         logger.info(f'Forwarding links to {panda_links_channel.guild} - {panda_links_channel}')
-    if panda2_output_channel:
-        logger.info(f'Forwarding deals from {panda2_input_channel.guild} - {panda2_input_channel} to {panda2_output_channel.guild} - {panda2_output_channel}')
+    if panda_anime_output_channel:
+        logger.info(f'Forwarding deals from {panda_anime_input_channel.guild} - {panda_anime_input_channel} to {panda_anime_output_channel.guild} - {panda_anime_output_channel}')
     logger.info('')
     if deals_logging_output:
         logger.info(f'Logging deleted messages from {client.get_guild(deals_id)} in:       {deals_logging_output.guild} - {deals_logging_output}')
@@ -224,6 +225,52 @@ async def on_message(message):
             logger.info(f'{output_str.count('\n')} codes sent to {output_channel}')
             logger.info('--------------------------------------------------------\n\n')
 
+    elif '!rolescan' in message.content and message.channel.id in [panda_jiggly_channel_id, panda2_jiggly_channel_id, dm_channel_id]:
+        logger.info('--------------------------------------------------------')
+        logger.info('Scanning roles...')
+        output_channel = message.channel
+        await output_channel.send('### Scanning roles...')
+        output_strings = []
+        output_str = '### Users with Free Premium role but no paid subscription:\n\n'
+        free_users = []
+        prem_users = []
+        canada_users = []
+        basic_users = []
+        panda_users = []
+        flagged = []
+        async for user in client.get_guild(panda2_id).fetch_members():
+            for role in user.roles:
+                if role.id == panda2_prem_role_id:
+                    free_users.append(user.id)
+        async for user in client.get_guild(panda_id).fetch_members():
+            panda_users.append(user.id)
+            for role in user.roles:
+                if role.id == panda_prem_role_id:
+                    prem_users.append(user.id)
+                if role.id == panda_canada_role_id:
+                    canada_users.append(user.id)
+                if role.id == panda_basic_role_id:
+                    basic_users.append(user.id)
+        for user in sorted(free_users):
+            if user not in prem_users and user not in canada_users and user not in basic_users and user in panda_users:
+                flagged.append(user)
+        for user in flagged:
+            if len(output_str) + len((str(user)+'\n')) > 2000:
+                output_strings.append(deepcopy(output_str))
+                output_str = ''
+            output_str += (str(user)+'\n')
+        output_strings.append(deepcopy(output_str))
+
+        logger.info(f'Printing {len(flagged)} flagged users')
+        if len(flagged) > 0:
+            for msg in output_strings:
+                logger.info(msg)
+                await output_channel.send(msg)
+        else:
+            output_str +=
+            await output_channel.send('### (no users)'
+        logger.info('--------------------------------------------------------\n\n')
+
 
     ################################################
     ###                 DM COMMANDS
@@ -272,7 +319,7 @@ async def on_message(message):
         #         logger.info(f'{output_str.count('\n')} codes sent to {output_channel}')
         #         logger.info('--------------------------------------------------------\n\n')
 
-        
+
         # elif message.content.startswith('!copy contents'):
         #     input_channel = client.get_guild(deals_id).get_thread(1345099806221144217)
         #     output_channel = client.get_channel(1351635196574957660)
@@ -342,8 +389,8 @@ async def on_message(message):
             logger.info('--------------------------------------------------------\n\n')
 
         elif message.content.startswith('!asdfasdf'):
-            channel = panda2_input_channel
-            output_channel = panda2_output_channel
+            channel = panda_anime_input_channel
+            output_channel = panda_anime_output_channel
             logger.info('--------------------------------------------------------')
             logger.info(f'Printing last {1} messages for {channel.name}:')
             logger.info('')
@@ -493,10 +540,10 @@ async def on_message(message):
         #####################################################
         ###          PANDA DEALS FORWARDING (to 2nd server)
         #####################################################
-        if message.channel.id in [panda2_input_id] and message.type == discord.MessageType.default and not message.thread and message.embeds:
+        if message.channel.id in [panda_anime_input_id] and message.type == discord.MessageType.default and not message.thread and message.embeds:
             logger.info('----------------------------------------------------------------------')
             logger.info(f'Received Amazon deal in {message.channel}')
-            output_channel = panda2_output_channel
+            output_channel = panda_anime_output_channel
             embeds = []
             for embed in message.embeds:
                 embed_dict = embed.to_dict()
@@ -674,7 +721,7 @@ async def on_reaction_add(reaction, user):
     msg_to_react = None
     if user == client.user:           # ignore self just in case
         return
-    if reaction.message.channel.id == panda2_input_id:  # ignore panda2 amazon pings
+    if reaction.message.channel.id == panda_anime_input_id:  # ignore panda_anime amazon pings
         return
 
     ##############################################
