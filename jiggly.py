@@ -186,7 +186,7 @@ async def on_message(message):
                 await panda_jiggly_channel.send('### ' + output_str)
 
     elif message.attachments and '!qr' in message.content:
-        output_channel = message.channel
+        output_channel = channels[message.channel]
         qreader = QReader()
         for attachment in message.attachments:
             nparr = np.frombuffer((await attachment.read()), np.uint8)
@@ -194,15 +194,26 @@ async def on_message(message):
 
             output_str = ''
             results = qreader.detect_and_decode(image=image)
+            results = [result for result in results if result]
+            if not results:
+                logger.info('--------------------------------------------------------')
+                logger.info(f'Image received in {message.channel} but no QR codes found')
+                logger.info('--------------------------------------------------------')
+                return
             logger.info('--------------------------------------------------------')
 
             with open('random_data/codes.json', 'r+') as f:
                 codes = json.load(f)
+                code = ''
                 for result in results:
-                    if result and result not in codes:
-                        codes.append(result)
-                        logger.info(f'{result}')
-                        output_str += '\n' + result.replace('-','')
+                    if "=" in result:
+                        code = value.split('=')[1]
+                    else:
+                        code = result
+                    if result not in codes:
+                        codes.append(code)
+                        logger.info(f'{code}')
+                        output_str += '\n' + code.replace('-','')
                 f.seek(0)
                 f.write(json.dumps(codes))
 
@@ -212,18 +223,20 @@ async def on_message(message):
                     leaderboard[str(message.author.id)] += output_str.count('\n')
                 else:
                     leaderboard[str(message.author.id)] = output_str.count('\n')
-                f.truncate(0)
                 f.seek(0)
                 f.write(json.dumps(leaderboard))
-                if len(results) == output_str.count('\n'):
-                    await output_channel.send(f'## <:espfetti:1384741067525455952> Thank you <@{message.author.id}> for submitting {output_str.count('\n')} codes! <a:shakeSylv:1385309636084891700>\n### Your total: {leaderboard[str(message.author.id)]} codes <a:sylvesip_gif:1395841408908394607>{output_str}', silent=True)
-                elif output_str.count('\n') == 0:
-                    await output_channel.send(f'### <@{message.author.id}> Oops, those codes have been submitted already! <a:eeveeslap:1385013303775854693>', silent=True)
+                if output_str.count('\n') == 0:
+                    await output_channel.send(f'### <@{message.author.id}> Thanks, but those codes have been submitted already! <a:eeveeslap:1352484159485902859>', silent=True)
+                elif len(results) == output_str.count('\n'):
+                    new_msg = await output_channel.send(f'## <:espfetti:1350942179522121891> Thank you <@{message.author.id}> for submitting {output_str.count('\n')} codes! <a:sylvekiss:1364084379726643262>\n### Your total: {leaderboard[str(message.author.id)]} codes <a:sylvesip_gif:1364082945811288115>{output_str}', silent=True)
+                    message_ids[(message.channel.id, message.id)] = [(output_channel.id, new_msg.id)]
+                    message_ids_rev[message_ids[(message.channel.id, message.id)][-1]] = (message.channel.id, message.id)
                 else:
-                    await output_channel.send(f'## <:espfetti:1384741067525455952> Thank you <@{message.author.id}> for submitting {len(results)} codes! <a:shakeSylv:1385309636084891700>\n### But {len(results)-output_str.count('\n')} codes were submitted already <a:leafeonGiggle:1385011996847505438>\n ### Your total: {leaderboard[str(message.author.id)]} codes <a:sylvesip_gif:1395841408908394607>{output_str}', silent=True)
+                    new_msg = await output_channel.send(f'## <:espfetti:1350942179522121891> Thank you <@{message.author.id}> for submitting {len(results)} codes! <a:sylvekiss:1364084379726643262>\n### But {len(results)-output_str.count('\n')} codes were submitted already <a:leafeongiggle:1352483452376711249>\n ### Your total: {leaderboard[str(message.author.id)]} codes <a:sylvesip_gif:1364082945811288115>{output_str}', silent=True)
+                    message_ids[(message.channel.id, message.id)] = [(output_channel.id, new_msg.id)]
+                    message_ids_rev[message_ids[(message.channel.id, message.id)][-1]] = (message.channel.id, message.id)
                 logger.info(f'{len(results)} QR codes detected from {message.author.display_name} (Total: {leaderboard[str(message.author.id)]})')
             logger.info(f'{output_str.count('\n')} codes sent to {output_channel}')
-            logger.info('--------------------------------------------------------\n\n')
 
     elif '!rolescan' in message.content and message.channel.id in [panda_jiggly_channel_id, panda2_jiggly_channel_id, dm_channel_id]:
         logger.info('--------------------------------------------------------')
@@ -267,8 +280,7 @@ async def on_message(message):
                 logger.info(msg)
                 await output_channel.send(msg)
         else:
-            output_str +=
-            await output_channel.send('### (no users)'
+            await output_channel.send('### (no users)')
         logger.info('--------------------------------------------------------\n\n')
 
 
@@ -388,7 +400,7 @@ async def on_message(message):
                 logger.info(f'{msg.created_at.astimezone().replace(microsecond=0,tzinfo=None)} - {msg.author.name}: {msg.content}')
             logger.info('--------------------------------------------------------\n\n')
 
-        elif message.content.startswith('!asdfasdf'):
+        elif message.content.startswith('!animetest'):
             channel = panda_anime_input_channel
             output_channel = panda_anime_output_channel
             logger.info('--------------------------------------------------------')
@@ -433,7 +445,6 @@ async def on_message(message):
         ###                      QR CODES
         #####################################################
         if message.channel.id in [qr_input_id] and message.attachments:
-            global code_subs
             output_channel = channels[message.channel]
             qreader = QReader()
             for attachment in message.attachments:
@@ -452,11 +463,16 @@ async def on_message(message):
 
                 with open('random_data/codes.json', 'r+') as f:
                     codes = json.load(f)
+                    code = ''
                     for result in results:
+                        if "=" in result:
+                            code = value.split('=')[1]
+                        else:
+                            code = result
                         if result not in codes:
-                            codes.append(result)
-                            logger.info(f'{result}')
-                            output_str += '\n' + result.replace('-','')
+                            codes.append(code)
+                            logger.info(f'{code}')
+                            output_str += '\n' + code.replace('-','')
                     f.seek(0)
                     f.write(json.dumps(codes))
 
@@ -474,22 +490,12 @@ async def on_message(message):
                         new_msg = await output_channel.send(f'## <:espfetti:1350942179522121891> Thank you <@{message.author.id}> for submitting {output_str.count('\n')} codes! <a:sylvekiss:1364084379726643262>\n### Your total: {leaderboard[str(message.author.id)]} codes <a:sylvesip_gif:1364082945811288115>{output_str}', silent=True)
                         message_ids[(message.channel.id, message.id)] = [(output_channel.id, new_msg.id)]
                         message_ids_rev[message_ids[(message.channel.id, message.id)][-1]] = (message.channel.id, message.id)
-                        code_subs += 1
                     else:
                         new_msg = await output_channel.send(f'## <:espfetti:1350942179522121891> Thank you <@{message.author.id}> for submitting {len(results)} codes! <a:sylvekiss:1364084379726643262>\n### But {len(results)-output_str.count('\n')} codes were submitted already <a:leafeongiggle:1352483452376711249>\n ### Your total: {leaderboard[str(message.author.id)]} codes <a:sylvesip_gif:1364082945811288115>{output_str}', silent=True)
                         message_ids[(message.channel.id, message.id)] = [(output_channel.id, new_msg.id)]
                         message_ids_rev[message_ids[(message.channel.id, message.id)][-1]] = (message.channel.id, message.id)
-                        code_subs += 1
                     logger.info(f'{len(results)} QR codes detected from {message.author.display_name} (Total: {leaderboard[str(message.author.id)]})')
                 logger.info(f'{output_str.count('\n')} codes sent to {output_channel}')
-                # logger.info(f'{15-code_subs} messages remaining until leaderboard output')
-                # logger.info('--------------------------------------------------------\n\n')
-                # if code_subs == 15:
-                #     await print_leaderboard(client, logger, None, message.channel)
-                #     code_subs = 0
-                #     logger.info('--------------------------------------------------------')
-                #     logger.info(f'Printing leaderboard')
-                #     logger.info('--------------------------------------------------------\n\n')
 
         #####################################################
         ###             CONTENTS CHANNEL FORWARDING
