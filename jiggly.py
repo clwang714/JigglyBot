@@ -1,4 +1,5 @@
 import discord
+from discord import app_commands
 import logging
 import logging.handlers
 import aiofiles
@@ -11,13 +12,22 @@ import numpy as np
 import json
 import regex as re
 from copy import deepcopy
+from typing import Optional
+from win32api import keybd_event
+from win32con import VK_ESCAPE, KEYEVENTF_EXTENDEDKEY
+import webbrowser
+
+
 
 from jigglyglobals import *
 from jigglylib import *
 
+
 intents = discord.Intents.all()
 allowed_mentions = allowed_mentions=discord.AllowedMentions(everyone=False,users=True,roles=True,replied_user=True)
 client = discord.Client(intents=intents, max_messages=500000, activity=discord.CustomActivity('💜ko-fi.com/jiggly714💜', emoji=discord.PartialEmoji.from_str('💜')))
+tree = app_commands.CommandTree(client)
+
 
 #####################################################
 ###              LOGGING TO EXTERNAL FILE
@@ -51,6 +61,8 @@ async def on_ready():
         channel_ids_rev[output] = input
         channels[client.get_channel(input)] = client.get_channel(output)
         channels_rev[client.get_channel(output)] = client.get_channel(input)
+        # logger.info(client.get_channel(input))
+        # logger.info(client.get_channel(output))
 
     # for id in deals_mod_role_ids:
     #     mod_roles.append(client.get_guild(deals_id).get_role(id))
@@ -72,6 +84,20 @@ async def on_ready():
     panda_anime_input_channel = client.get_channel(panda_anime_input_id)
     panda_anime_output_channel = client.get_channel(panda_anime_output_id)
 
+    global psa8_channel
+    global psa9_channel
+    global psa10_channel
+    psa8_channel = client.get_channel(psa8_id)
+    psa9_channel = client.get_channel(psa9_id)
+    psa10_channel = client.get_channel(psa10_id)
+
+    global slab_alarm
+    slab_alarm = False
+
+    global slab_dm_keywords
+    with open('random_data/slab_dms.json', 'r+') as f:
+        slab_dm_keywords = json.load(f)
+
     for (guild, channel) in archive_channel_ids.items():
         archive_channels[guild] = client.get_channel(channel)
 
@@ -79,6 +105,7 @@ async def on_ready():
         bot_channels.append(client.get_channel(id))
 
     emojis = [emoji for emoji in client.emojis]
+
 
     logger.info('')
     logger.info('----------------------------------------------------------------------')
@@ -113,8 +140,149 @@ async def on_ready():
     for channel in bot_channels:
         logger.info(f'Logging botters in: {' '*(18-len(str(channel.guild)))}{channel.guild} - {channel}')
     logger.info('')
+    if psa8_channel:
+        logger.info(f'Monitoring Gamestop slabs in {psa8_channel.guild} - {psa8_channel}')
+    if psa9_channel:
+        logger.info(f'Monitoring Gamestop slabs in {psa9_channel.guild} - {psa9_channel}')
+    if psa10_channel:
+        logger.info(f'Monitoring Gamestop slabs in {psa10_channel.guild} - {psa10_channel}')
+    logger.info('')
+    for command in (await tree.fetch_commands(guild=discord.Object(id=panda_id))):
+        logger.info('')
+        logger.info(f'Command {command.name} loaded in {command.guild}')
+    try:
+        for command in (await tree.fetch_commands(guild=discord.Object(id=jiggly_id))):
+            logger.info('')
+            logger.info(f'Command {command.name} loaded in {command.guild}')
+    except Exception as e:
+        logger.info('')
+        logger.info(f'No slash command perms for {client.get_guild(jiggly_id)}')
+    for command in (await tree.fetch_commands()):
+        logger.info('')
+        logger.info(f'Command {command.name} loaded {f'in {command.guild}' if command.guild else 'globally'}')
     logger.info('----------------------------------------------------------------------\n\n')
     #logger.info(default_emojis)
+
+################################################
+###             SLASH COMMANDS
+###############################################
+# @tree.command(name='slabalert', description='Setup DM alerts for Gamestop slabs', guild=discord.Object(id=panda_id))
+# @app_commands.describe(keyword='search term you want alerts for',
+#                        grades='acceptable PSA grades (e.g. "9 10") - Default: any',
+#                        nickname='shorthand card name, used when sending alerts (e.g. "Bubble Mew") - Default: same as keyword')
+# async def slab_alert(interaction: discord.Interaction, keyword: str, grades: Optional[str] = '', nickname: Optional[str] = ''):
+#     output_str = ''
+#     grades_list = []
+#     if '8' in grades:
+#         grades_list.append('8')
+#     if '9' in grades:
+#         grades_list.append('9')
+#     if '10' in grades:
+#         grades_list.append('10')
+#     if grades in ['any', 'all', '']:
+#         grades_list = ['8','9','10']
+#     if not grades_list:
+#         output_str += '### Could not parse grades, defaulting to any'
+#         grades_list = ['8','9','10']
+#
+#     with open('random_data/slab_dms.json', 'r+') as f:
+#         slab_dm_keywords = json.load(f)
+#         for grade in grades_list:
+#             if keyword not in slab_dm_keywords:
+#                 slab_dm_keywords[keyword] = {'8':{}, '9':{}, '10':{}}
+#             slab_dm_keywords[keyword][grade][str(interaction.user.id)] = nickname
+#
+#         nickname = ' (nickname: ' + nickname + ')' if nickname else ''
+#         logger.info('----------------------------------------------------------------------')
+#         logger.info(f'Adding new keyword {keyword}{nickname} for {interaction.user} with grades {grades_list}')
+#         logger.info(json.dumps(slab_dm_keywords, indent=4))
+#         logger.info('----------------------------------------------------------------------\n\n')
+#         f.seek(0)
+#         f.write(json.dumps(slab_dm_keywords, indent=4))
+
+@tree.command(name='slabalert', description='Setup DM alerts for Gamestop slabs')
+@app_commands.describe(keyword='case insensitive (e.g. "232 mew") - Use "." to view your alerts',
+                       grades='acceptable PSA grades (e.g. "9 10" or "any" or "none") - Default: any',
+                       nickname='card name to use in alert (e.g. "Bubble Mew") - Default: same as keyword')
+@app_commands.allowed_installs(guilds=True, users=True)
+@app_commands.allowed_contexts(guilds=True, dms=True, private_channels=False)
+async def slab_alert(interaction: discord.Interaction, keyword: str, grades: Optional[str] = '', nickname: Optional[str] = ''):
+    global slab_dm_keywords
+    keyword = keyword.lower()
+    if keyword == '.':
+        items = {}
+        for keyword,grades in slab_dm_keywords.items():
+            items[keyword] = {}
+            for grade,users in grades.items():
+                for user, nickname in users.items():
+                    if user == str(interaction.user.id):
+                        items[keyword]['nickname'] = nickname
+                        if 'grades' not in items[keyword].keys():
+                            items[keyword]['grades'] = [int(grade)]
+                        else:
+                            items[keyword]['grades'].append(int(grade))
+            if not items[keyword]:
+                del items[keyword]
+
+        output_str = ''
+        for keyword in items.keys():
+            nickname = ' (nickname: ' + items[keyword]['nickname'] + ')' if items[keyword]['nickname'] else ''
+            output_str += f'### [{keyword}]{nickname} - Grades: {items[keyword]['grades']}\n'
+        await interaction.response.send_message(f'### Sending list of current alerts, check your DMs')
+        await interaction.user.send(output_str)
+        return
+
+
+    output_str = ''
+    grades_list = []
+    if '8' in grades:
+        grades_list.append('8')
+    if '9' in grades:
+        grades_list.append('9')
+    if '10' in grades:
+        grades_list.append('10')
+    if grades in ['any', 'all', '']:
+        grades_list = ['8','9','10']
+    if grades == 'none':
+        grades_list = ['-1']
+    if not grades_list:
+        output_str += '### Could not parse grades, defaulting to any\n'
+        grades_list = ['8','9','10']
+
+    with open('random_data/slab_dms.json', 'r+') as f:
+        slab_dm_keywords = json.load(f)
+        if grades_list != ['-1']:
+            for grade in grades_list:
+                if keyword not in slab_dm_keywords:
+                    slab_dm_keywords[keyword] = {'8':{}, '9':{}, '10':{}}
+                slab_dm_keywords[keyword][grade][str(interaction.user.id)] = nickname
+
+            nickname = ' (nickname: ' + nickname + ')' if nickname else ''
+            logger.info('----------------------------------------------------------------------')
+            logger.info(f'Adding new keyword {keyword}{nickname} for {interaction.user} with grades {[int(n) for n in grades_list]}')
+            #logger.info(json.dumps(slab_dm_keywords, indent=4))
+            logger.info('----------------------------------------------------------------------\n\n')
+            f.truncate(0)
+            f.seek(0)
+            f.write(json.dumps(slab_dm_keywords, indent=4))
+            output_str += f'### Added alert for [{keyword}]{nickname} with grades {[int(n) for n in grades_list]}'
+            await interaction.response.send_message(output_str)
+        else:
+            if keyword in slab_dm_keywords:
+                for grade in ['8','9','10']:
+                    if str(interaction.user.id) in slab_dm_keywords[keyword][grade]:
+                        del slab_dm_keywords[keyword][grade][str(interaction.user.id)]
+                if slab_dm_keywords[keyword] == {'8':{}, '9':{}, '10':{}}:
+                    del slab_dm_keywords[keyword]
+            logger.info('----------------------------------------------------------------------')
+            logger.info(f'Removing keyword {keyword} for {interaction.user}')
+            #logger.info(json.dumps(slab_dm_keywords, indent=4))
+            logger.info('----------------------------------------------------------------------\n\n')
+            f.truncate(0)
+            f.seek(0)
+            f.write(json.dumps(slab_dm_keywords, indent=4))
+            output_str += f'### Removed alert for [{keyword}] for all grades'
+            await interaction.response.send_message(output_str)
 
 
 ################################################
@@ -123,6 +291,8 @@ async def on_ready():
 @client.event
 async def on_message(message):
     global users_to_monitor
+    global slab_dm_keywords
+    global slab_alarm
     if message.author == client.user:           # ignore self just in case
         return
 
@@ -185,6 +355,9 @@ async def on_message(message):
                     output_str = f'<@{user_to_alert}> ' + output_str
                 await panda_jiggly_channel.send('### ' + output_str)
 
+    #####################################################
+    ###                 QR CODE SCANNING
+    #####################################################
     elif message.attachments and '!qr' in message.content:
         output_channel = channels[message.channel]
         qreader = QReader()
@@ -238,6 +411,9 @@ async def on_message(message):
                 logger.info(f'{len(results)} QR codes detected from {message.author.display_name} (Total: {leaderboard[str(message.author.id)]})')
             logger.info(f'{output_str.count('\n')} codes sent to {output_channel}')
 
+    #####################################################
+    ###                 ROLE SCANNING
+    #####################################################
     elif '!rolescan' in message.content and message.channel.id in [panda_jiggly_channel_id, panda2_jiggly_channel_id, dm_channel_id]:
         logger.info('--------------------------------------------------------')
         logger.info('Scanning roles...')
@@ -283,11 +459,79 @@ async def on_message(message):
             await output_channel.send('### (no users)')
         logger.info('--------------------------------------------------------\n\n')
 
+    #####################################################
+    ###                 GAMESTOP SLAB DMs
+    #####################################################
+    elif message.channel.id in [psa8_id, psa9_id, psa10_id] and message.embeds:
+        for embed in message.embeds:
+            embed_dict = embed.to_dict()
+            for keyword in slab_dm_keywords:
+                if keyword.lower() in embed_dict['title'].lower():
+                    fields = []
+                    sku = ''
+                    price = False
+                    for field in embed_dict['fields']:
+                        if field['name'] == 'Price':
+                            fields.append(field)
+                            price = True
+                        if field['name'] == 'SKU':
+                            fields.append(field)
+                            sku = field['value']
+                    # if not price:
+                    #     logger.info('--------------------------------------------------------')
+                    #     logger.info(f'Slab {nickname} found for {client.get_user(int(user_id))}, but no listed price')
+                    #     logger.info('--------------------------------------------------------\n\n')
+                    #     return
+                    embed_dict['fields'] = fields
+                    embed_dict['footer']['text'] = embed_dict['footer']['text'].replace(' Search || ', ' 🤝 Powered by Jiggly || ')
+                    embed_dict['author'] = jigglyslabs_dict
+
+                    users = []
+                    tag = ''
+                    if embed_dict['title'].endswith('PSA 8'):
+                        tag = ' [PSA 8]'
+                        users = slab_dm_keywords[keyword]['8'].items()
+                    elif embed_dict['title'].endswith('PSA 9'):
+                        tag = ' [PSA 9]'
+                        users = slab_dm_keywords[keyword]['9'].items()
+                    elif embed_dict['title'].endswith('PSA 10'):
+                        tag = ' [PSA 10]'
+                        users = slab_dm_keywords[keyword]['10'].items()
+
+                    for (user_id, nickname) in users:
+                        if not nickname:
+                            nickname = keyword
+                        nickname += tag
+                        logger.info('--------------------------------------------------------')
+                        logger.info(f'Forwarding slab {nickname} to {client.get_user(int(user_id))}')
+                        logger.info('--------------------------------------------------------\n\n')
+                        if int(user_id) in test_users:
+                            await client.get_user(int(user_id)).send(f'## {nickname}', embed=discord.Embed.from_dict(embed_dict))
+                            await client.get_user(int(user_id)).send(f'GameStop://www.gamestop.com/graded-trading-cards/graded-cards/tcg-cards/pokemon-cards/products/{embed_dict['title'].replace(' ','-').replace('/','-')}/{sku}.html')
+                        else:
+                            await client.get_user(int(user_id)).send(f'### {nickname} found!\n{message.jump_url}')
+                        if int(user_id) == jiggly_user_id:
+                            if not slab_alarm:
+                                slab_alarm = True
+                                webbrowser.open(f'https://www.gamestop.com/graded-trading-cards/graded-cards/tcg-cards/pokemon-cards/products/{embed_dict['title'].replace(' ','-')}/{sku}.html')
+                                # await toggle_media_async()
+                                logger.info('--------------------------------------------------------')
+                                while slab_alarm:
+                                    logger.info(f'Playing alarm for slab {nickname}')
+                                    await play_sound_async("./random_data/sparkle.mp3")
+                                logger.info('--------------------------------------------------------')
+
+
+
+
 
     ################################################
     ###                 DM COMMANDS
     ###############################################
     if message.channel.id == dm_channel_id: #DM
+        # toggle off any active alerts
+        slab_alarm = False
+
         if message.content.startswith('!say '):
             await send_message(logger, client.get_channel(int(message.content.split()[1])), message)
 
@@ -400,7 +644,7 @@ async def on_message(message):
                 logger.info(f'{msg.created_at.astimezone().replace(microsecond=0,tzinfo=None)} - {msg.author.name}: {msg.content}')
             logger.info('--------------------------------------------------------\n\n')
 
-        elif message.content.startswith('!animetest'):
+        elif message.content == '!animetest':
             channel = panda_anime_input_channel
             output_channel = panda_anime_output_channel
             logger.info('--------------------------------------------------------')
@@ -434,10 +678,63 @@ async def on_message(message):
                 logger.info('----------------------------------------------------------------------\n\n')
             logger.info('--------------------------------------------------------\n\n')
 
+        elif message.content == '!slabtest':
+            input_channel = psa8_channel
+            output_user = client.get_user(jiggly_user_id)
+            logger.info('--------------------------------------------------------')
+            logger.info(f'Printing last {1} messages for {input_channel.name}:')
+            logger.info('')
+            msgs = [msg async for msg in input_channel.history(oldest_first=False, limit=2)]
+            for msg in reversed(msgs):
+                embeds = []
+                for embed in msg.embeds:
+                    embed_dict = embed.to_dict()
+                    logger.info('')
+                    logger.info(embed_dict)
+                    logger.info('')
+                    fields = []
+                    for field in embed_dict['fields']:
+                        if field['name'] in ['Price', 'SKU']:
+                            fields.append(field)
+                    embed_dict['fields'] = fields
+                    embed_dict['footer']['text'] = embed_dict['footer']['text'].replace(' Search || ', ' 🤝 Powered by Jiggly || ')
+                    embed_dict['author'] = jigglyslabs_dict
+                    #embed_dict['url'] = embed_dict['url'].replace('https', 'http://GameStop')
+                    embeds.append(discord.Embed.from_dict(embed_dict))
+                await output_user.send('', embeds=embeds)
+                logger.info(f'Forwarding slab to {output_user}')
+            logger.info('--------------------------------------------------------\n\n')
 
+
+        elif message.content == '!reloadslabs':
+            await message.channel.send('### Reloading slab DM prefs')
+            with open('random_data/slab_dms.json', 'r') as f:
+                slab_dm_keywords = json.load(f)
+                logger.info('--------------------------------------------------------')
+                logger.info('Reloading slab DM prefs')
+                logger.info(f"⠀\n{json.dumps(slab_dm_keywords, indent=4)}")
+                logger.info('--------------------------------------------------------\n\n')
+
+        elif message.content == '!sync':
+            # tree.copy_global_to(guild=discord.Object(id=panda_id))
+            # await tree.sync(guild=discord.Object(id=panda_id))
+            tree.copy_global_to(guild=discord.Object(id=jiggly_id))
+            await tree.sync(guild=discord.Object(id=jiggly_id))
+            # await tree.sync()
+
+        elif message.content == '!alarmtest':
+            if not slab_alarm:
+                slab_alarm = True
+                webbrowser.open('https://www.gamestop.com/on/demandware.store/Sites-gamestop-us-Site/default/Product-Show?pid=PSA111979872M&NMKL=GTJRV')
+                # await toggle_media_async()
+                logger.info('--------------------------------------------------------')
+                while slab_alarm:
+                    logger.info(f'Playing alarm')
+                    await play_sound_async("./random_data/sparkle.mp3")
+                logger.info('--------------------------------------------------------')
 
     #################################
-    ###     SERVER MESSAGES
+    ###     SERVER FORWARDING
     ################################
     if message.channel.id in channel_ids:
 

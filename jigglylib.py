@@ -3,6 +3,7 @@ import logging
 import logging.handlers
 import regex as re
 import aiofiles
+import asyncio
 import json
 import datetime
 import time
@@ -10,6 +11,10 @@ from dateutil.parser import parse
 from dateutil.tz import gettz
 from pytz import timezone
 from urllib.parse import urljoin, urlparse
+from playsound import playsound
+from win32api import keybd_event
+from win32con import VK_MEDIA_PLAY_PAUSE, KEYEVENTF_EXTENDEDKEY
+# import pyautogui
 
 from jigglyglobals import *
 
@@ -18,6 +23,18 @@ from jigglyglobals import *
 ###########################################################
 #####             FUNCTION IMPLEMENTATIONS
 ###########################################################
+async def play_sound_async(file_path):
+    await asyncio.to_thread(playsound, file_path)
+
+async def toggle_media_async():
+    # await asyncio.to_thread(pyautogui.keyDown, 'alt')
+    # await asyncio.sleep(.05)
+    # pyautogui.press('tab')
+    # time.sleep(.2)
+    # pyautogui.keyUp('alt')
+    await asyncio.to_thread(keybd_event, VK_MEDIA_PLAY_PAUSE, 0, KEYEVENTF_EXTENDEDKEY, 0)
+    await asyncio.sleep(.05)
+    await asyncio.to_thread(keybd_event, VK_MEDIA_PLAY_PAUSE, 0, KEYEVENTF_EXTENDEDKEY, 0)
 
 async def send_message(logger, output_channel, message):
     output_msg = await output_channel.send(message.content[len(str(output_channel.id))+6:])
@@ -431,7 +448,7 @@ async def print_leaderboard(client, logger, message, channel):
             count += 1
             found = (found or user == str(search_id))
             if count <= leaderboard_count:
-                guild = client.get_guild(jiggly_id)
+                guild = message.channel.guild
                 name = ''
                 try:
                     name = (await guild.fetch_member(user)).display_name
