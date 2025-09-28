@@ -5,7 +5,7 @@ import logging.handlers
 import aiofiles
 import aiohttp
 import asyncio
-import datetime
+from datetime import datetime, timedelta
 from qreader import QReader
 import cv2
 import numpy as np
@@ -74,15 +74,19 @@ async def on_ready():
     global jiggly_logging_output
     global panda_links_channel
     global panda_jiggly_channel
-    global panda_anime_input_channel
-    global panda_anime_output_channel
+    global panda_jp_tweets_channel
+    global panda_jp_tweets_output_channel
+    # global panda_anime_input_channel
+    # global panda_anime_output_channel
     deals_logging_output = client.get_channel(deals_logging_output_id)
     prem_logging_output = client.get_channel(prem_logging_output_id)
     jiggly_logging_output = client.get_channel(jiggly_logging_output_id)
     panda_links_channel = client.get_channel(panda_links_id)
     panda_jiggly_channel = client.get_channel(panda_jiggly_channel_id)
-    panda_anime_input_channel = client.get_channel(panda_anime_input_id)
-    panda_anime_output_channel = client.get_channel(panda_anime_output_id)
+    panda_jp_tweets_channel = client.get_channel(panda_jp_tweets_id)
+    panda_jp_tweets_output_channel = client.get_channel(panda_jp_tweets_output_id)
+    # panda_anime_input_channel = client.get_channel(panda_anime_input_id)
+    # panda_anime_output_channel = client.get_channel(panda_anime_output_id)
 
     global psa8_channel
     global psa9_channel
@@ -97,6 +101,14 @@ async def on_ready():
     global slab_dm_keywords
     with open('random_data/slab_dms.json', 'r+') as f:
         slab_dm_keywords = json.load(f)
+
+    global last_tweet_ts
+    last_tweet_ts = datetime.now() - timedelta(seconds=tweet_interval)
+
+    global panda_bot_checkouts_channel
+    global panda_checkout_alerts_channel
+    panda_bot_checkouts_channel = client.get_channel(panda_bot_checkouts_id)
+    panda_checkout_alerts_channel = client.get_channel(panda_checkout_alerts_id)
 
     for (guild, channel) in archive_channel_ids.items():
         archive_channels[guild] = client.get_channel(channel)
@@ -147,6 +159,9 @@ async def on_ready():
     if psa10_channel:
         logger.info(f'Monitoring Gamestop slabs in {psa10_channel.guild} - {psa10_channel}')
     logger.info('')
+    if panda_jp_tweets_channel:
+        logger.info(f'Translating tweets from {panda_jp_tweets_channel.guild} - {panda_jp_tweets_channel} to {panda_jp_tweets_output_channel.guild} - {panda_jp_tweets_output_channel}')
+        logger.info('')
     for command in (await tree.fetch_commands(guild=discord.Object(id=panda_id))):
         logger.info('')
         logger.info(f'Command {command.name} loaded in {command.guild}')
@@ -166,40 +181,6 @@ async def on_ready():
 ################################################
 ###             SLASH COMMANDS
 ###############################################
-# @tree.command(name='slabalert', description='Setup DM alerts for Gamestop slabs', guild=discord.Object(id=panda_id))
-# @app_commands.describe(keyword='search term you want alerts for',
-#                        grades='acceptable PSA grades (e.g. "9 10") - Default: any',
-#                        nickname='shorthand card name, used when sending alerts (e.g. "Bubble Mew") - Default: same as keyword')
-# async def slab_alert(interaction: discord.Interaction, keyword: str, grades: Optional[str] = '', nickname: Optional[str] = ''):
-#     output_str = ''
-#     grades_list = []
-#     if '8' in grades:
-#         grades_list.append('8')
-#     if '9' in grades:
-#         grades_list.append('9')
-#     if '10' in grades:
-#         grades_list.append('10')
-#     if grades in ['any', 'all', '']:
-#         grades_list = ['8','9','10']
-#     if not grades_list:
-#         output_str += '### Could not parse grades, defaulting to any'
-#         grades_list = ['8','9','10']
-#
-#     with open('random_data/slab_dms.json', 'r+') as f:
-#         slab_dm_keywords = json.load(f)
-#         for grade in grades_list:
-#             if keyword not in slab_dm_keywords:
-#                 slab_dm_keywords[keyword] = {'8':{}, '9':{}, '10':{}}
-#             slab_dm_keywords[keyword][grade][str(interaction.user.id)] = nickname
-#
-#         nickname = ' (nickname: ' + nickname + ')' if nickname else ''
-#         logger.info('----------------------------------------------------------------------')
-#         logger.info(f'Adding new keyword {keyword}{nickname} for {interaction.user} with grades {grades_list}')
-#         logger.info(json.dumps(slab_dm_keywords, indent=4))
-#         logger.info('----------------------------------------------------------------------\n\n')
-#         f.seek(0)
-#         f.write(json.dumps(slab_dm_keywords, indent=4))
-
 @tree.command(name='slabalert', description='Setup DM alerts for Gamestop slabs')
 @app_commands.describe(keyword='case insensitive (e.g. "232 mew") - Use "." to view your alerts',
                        grades='acceptable PSA grades (e.g. "9 10" or "any" or "none") - Default: any',
@@ -230,6 +211,9 @@ async def slab_alert(interaction: discord.Interaction, keyword: str, grades: Opt
             output_str += f'### [{keyword}]{nickname} - Grades: {items[keyword]['grades']}\n'
         await interaction.response.send_message(f'### Sending list of current alerts, check your DMs')
         await interaction.user.send(output_str)
+        logger.info('----------------------------------------------------------------------')
+        logger.info(f'Sending list of current alerts to {interaction.user}')
+        logger.info('----------------------------------------------------------------------\n\n')
         return
 
 
@@ -293,6 +277,8 @@ async def on_message(message):
     global users_to_monitor
     global slab_dm_keywords
     global slab_alarm
+    global last_tweet_ts
+    global checkout_log
     if message.author == client.user:           # ignore self just in case
         return
 
@@ -354,6 +340,30 @@ async def on_message(message):
                 for user_to_alert in users_to_monitor[str(message.author.id)]:
                     output_str = f'<@{user_to_alert}> ' + output_str
                 await panda_jiggly_channel.send('### ' + output_str)
+
+    #####################################################
+    ###                 TWEET TRANSLATE TEST
+    #####################################################
+    elif message.content.startswith('!translatetest'):
+        words = message.content.split(' ')
+        num_msgs = 1
+        if len(words) > 2:
+            await message.reply('### Syntax not recognized')
+            return
+        if len(words) == 2:
+            try:
+                num_msgs = int(words[1])
+            except ValueError as e:
+                await message.reply('### Second argument must be integer')
+                return
+        input_channel = panda_jp_tweets_channel
+        output_channel = message.channel
+        logger.info('--------------------------------------------------------')
+        logger.info(f'Translating last {num_msgs} messages for {input_channel.name}:')
+        logger.info('')
+        msgs = [msg async for msg in input_channel.history(oldest_first=False, limit=num_msgs)]
+        for msg in reversed(msgs):
+            await translate_tweet(logger, msg, output_channel)
 
     #####################################################
     ###                 QR CODE SCANNING
@@ -477,13 +487,8 @@ async def on_message(message):
                         if field['name'] == 'SKU':
                             fields.append(field)
                             sku = field['value']
-                    # if not price:
-                    #     logger.info('--------------------------------------------------------')
-                    #     logger.info(f'Slab {nickname} found for {client.get_user(int(user_id))}, but no listed price')
-                    #     logger.info('--------------------------------------------------------\n\n')
-                    #     return
                     embed_dict['fields'] = fields
-                    embed_dict['footer']['text'] = embed_dict['footer']['text'].replace(' Search || ', ' 🤝 Powered by Jiggly || ')
+                    embed_dict['footer']['text'] = embed_dict['footer']['text'].replace(' Search || ', ' 🤝 Powered by Jigglybot || ')
                     embed_dict['author'] = jigglyslabs_dict
 
                     users = []
@@ -513,13 +518,26 @@ async def on_message(message):
                         if int(user_id) == jiggly_user_id:
                             if not slab_alarm:
                                 slab_alarm = True
-                                webbrowser.open(f'https://www.gamestop.com/graded-trading-cards/graded-cards/tcg-cards/pokemon-cards/products/{embed_dict['title'].replace(' ','-')}/{sku}.html')
-                                # await toggle_media_async()
+                                webbrowser.open(f'https://www.gamestop.com/graded-trading-cards/graded-cards/tcg-cards/pokemon-cards/products/{embed_dict['title'].replace(' ','-').replace('/','-')}/{sku}.html')
+                                await toggle_media_async()
                                 logger.info('--------------------------------------------------------')
                                 while slab_alarm:
                                     logger.info(f'Playing alarm for slab {nickname}')
                                     await play_sound_async("./random_data/sparkle.mp3")
                                 logger.info('--------------------------------------------------------')
+
+
+    #####################################################
+    ###                 BOT CHECKOUT ALERTS
+    #####################################################
+    elif message.channel.id in [panda_bot_checkouts_channel]:
+        for embed in message.embeds:
+            embed_dict = embed.to_dict()
+            for field in embed_dict['fields']:
+                if field['name'] == 'Product'
+                    item_url = field['url']
+            if not 
+            checkout_log[item_url]
 
 
 
@@ -697,9 +715,8 @@ async def on_message(message):
                         if field['name'] in ['Price', 'SKU']:
                             fields.append(field)
                     embed_dict['fields'] = fields
-                    embed_dict['footer']['text'] = embed_dict['footer']['text'].replace(' Search || ', ' 🤝 Powered by Jiggly || ')
+                    embed_dict['footer']['text'] = embed_dict['footer']['text'].replace(' Search || ', ' 🤝 Powered by Jigglybot || ')
                     embed_dict['author'] = jigglyslabs_dict
-                    #embed_dict['url'] = embed_dict['url'].replace('https', 'http://GameStop')
                     embeds.append(discord.Embed.from_dict(embed_dict))
                 await output_user.send('', embeds=embeds)
                 logger.info(f'Forwarding slab to {output_user}')
@@ -726,182 +743,208 @@ async def on_message(message):
             if not slab_alarm:
                 slab_alarm = True
                 webbrowser.open('https://www.gamestop.com/on/demandware.store/Sites-gamestop-us-Site/default/Product-Show?pid=PSA111979872M&NMKL=GTJRV')
-                # await toggle_media_async()
+                await toggle_media_async()
                 logger.info('--------------------------------------------------------')
                 while slab_alarm:
                     logger.info(f'Playing alarm')
                     await play_sound_async("./random_data/sparkle.mp3")
+                logger.info('--------------------------------------------------------\n\n')
+
+        elif message.content == '!audiofix':
+            logger.info('--------------------------------------------------------')
+            logger.info(f'Fixing PC audio')
+            logger.info('--------------------------------------------------------\n\n')
+            await toggle_media_async()
+
+        elif message.content == '!whopwheel':
+            channel = client.get_channel(923724313742434304)
+            msg = await channel.fetch_message(1420500927344939058)
+            await channel.send(embeds=msg.embeds)
+
+
+    ######################################################################
+    ###                      SERVER FORWARDING
+    ######################################################################
+
+    #####################################################
+    ###                      TWEET TRANSLATOR
+    #####################################################
+    if message.channel.id in [panda_jp_tweets_id]:
+        curr_ts = datetime.now()
+        logger.info('--------------------------------------------------------')
+        logger.info(f'last tweet was at {last_tweet_ts}')
+        logger.info(f'current timestamp is {curr_ts}')
+        logger.info(f'difference is {curr_ts-last_tweet_ts}')
+        logger.info('--------------------------------------------------------\n\n')
+        if curr_ts > last_tweet_ts + timedelta(seconds=tweet_interval):
+            last_tweet_ts = curr_ts
+            await translate_tweet(logger, message, panda_jp_tweets_output_channel)
+
+
+    #####################################################
+    ###                      QR CODES
+    #####################################################
+    if message.channel.id in [qr_input_id] and message.attachments:
+        output_channel = channels[message.channel]
+        qreader = QReader()
+        for attachment in message.attachments:
+            nparr = np.frombuffer((await attachment.read()), np.uint8)
+            image=cv2.imdecode(nparr, cv2.IMREAD_UNCHANGED)
+
+            output_str = ''
+            results = qreader.detect_and_decode(image=image)
+            results = [result for result in results if result]
+            if not results:
                 logger.info('--------------------------------------------------------')
+                logger.info(f'Image received in {message.channel} but no QR codes found')
+                logger.info('--------------------------------------------------------\n\n')
+                return
+            logger.info('--------------------------------------------------------')
 
-    #################################
-    ###     SERVER FORWARDING
-    ################################
-    if message.channel.id in channel_ids:
-
-        #####################################################
-        ###                      QR CODES
-        #####################################################
-        if message.channel.id in [qr_input_id] and message.attachments:
-            output_channel = channels[message.channel]
-            qreader = QReader()
-            for attachment in message.attachments:
-                nparr = np.frombuffer((await attachment.read()), np.uint8)
-                image=cv2.imdecode(nparr, cv2.IMREAD_UNCHANGED)
-
-                output_str = ''
-                results = qreader.detect_and_decode(image=image)
-                results = [result for result in results if result]
-                if not results:
-                    logger.info('--------------------------------------------------------')
-                    logger.info(f'Image received in {message.channel} but no QR codes found')
-                    logger.info('--------------------------------------------------------')
-                    return
-                logger.info('--------------------------------------------------------')
-
-                with open('random_data/codes.json', 'r+') as f:
-                    codes = json.load(f)
-                    code = ''
-                    for result in results:
-                        if "=" in result:
-                            code = value.split('=')[1]
-                        else:
-                            code = result
-                        if result not in codes:
-                            codes.append(code)
-                            logger.info(f'{code}')
-                            output_str += '\n' + code.replace('-','')
-                    f.seek(0)
-                    f.write(json.dumps(codes))
-
-                with open('random_data/code_card_leaderboard.json', 'r+') as f:
-                    leaderboard = json.load(f)
-                    if str(message.author.id) in leaderboard:
-                        leaderboard[str(message.author.id)] += output_str.count('\n')
+            with open('random_data/codes.json', 'r+') as f:
+                codes = json.load(f)
+                code = ''
+                for result in results:
+                    if "=" in result:
+                        code = value.split('=')[1]
                     else:
-                        leaderboard[str(message.author.id)] = output_str.count('\n')
-                    f.seek(0)
-                    f.write(json.dumps(leaderboard))
-                    if output_str.count('\n') == 0:
-                        await output_channel.send(f'### <@{message.author.id}> Thanks, but those codes have been submitted already! <a:eeveeslap:1352484159485902859>', silent=True)
-                    elif len(results) == output_str.count('\n'):
-                        new_msg = await output_channel.send(f'## <:espfetti:1350942179522121891> Thank you <@{message.author.id}> for submitting {output_str.count('\n')} codes! <a:sylvekiss:1364084379726643262>\n### Your total: {leaderboard[str(message.author.id)]} codes <a:sylvesip_gif:1364082945811288115>{output_str}', silent=True)
-                        message_ids[(message.channel.id, message.id)] = [(output_channel.id, new_msg.id)]
-                        message_ids_rev[message_ids[(message.channel.id, message.id)][-1]] = (message.channel.id, message.id)
-                    else:
-                        new_msg = await output_channel.send(f'## <:espfetti:1350942179522121891> Thank you <@{message.author.id}> for submitting {len(results)} codes! <a:sylvekiss:1364084379726643262>\n### But {len(results)-output_str.count('\n')} codes were submitted already <a:leafeongiggle:1352483452376711249>\n ### Your total: {leaderboard[str(message.author.id)]} codes <a:sylvesip_gif:1364082945811288115>{output_str}', silent=True)
-                        message_ids[(message.channel.id, message.id)] = [(output_channel.id, new_msg.id)]
-                        message_ids_rev[message_ids[(message.channel.id, message.id)][-1]] = (message.channel.id, message.id)
-                    logger.info(f'{len(results)} QR codes detected from {message.author.display_name} (Total: {leaderboard[str(message.author.id)]})')
-                logger.info(f'{output_str.count('\n')} codes sent to {output_channel}')
+                        code = result
+                    if result not in codes:
+                        codes.append(code)
+                        logger.info(f'{code}')
+                        output_str += '\n' + code.replace('-','')
+                f.seek(0)
+                f.write(json.dumps(codes))
 
-        #####################################################
-        ###             CONTENTS CHANNEL FORWARDING
-        #####################################################
-        if message.channel.id in [contents_deals_id, contents_prem_id] and message.type == discord.MessageType.default and not message.thread:
-            if message.author.id in [taiyaki_id, sora_id]: #taiyaki, sora
-                output_channel = channels[message.channel]
-                content = ''
-                if message.attachments and not message.content.startswith('## '):
-                    content='## ' + message.content
-                    await message.channel.send(content=content, embeds=message.embeds, files=[await attachment.to_file() for attachment in message.attachments])#, allowed_mentions=discord.AllowedMentions(everyone=False,users=False,roles=False), silent=True)
-                    await message.delete()
-                await output_channel.send(content=content, embeds=message.embeds, files=[await attachment.to_file() for attachment in message.attachments])#, allowed_mentions=discord.AllowedMentions(everyone=False,users=False,roles=False), silent=True)
-                logger.info('----------------------------------------------------------------------')
-                logger.info(f'Received msg from {message.author.display_name} in {message.channel}')
-                logger.info(f'Forwarding msg to {output_channel}')
-                logger.info('----------------------------------------------------------------------\n\n')
+            with open('random_data/code_card_leaderboard.json', 'r+') as f:
+                leaderboard = json.load(f)
+                if str(message.author.id) in leaderboard:
+                    leaderboard[str(message.author.id)] += output_str.count('\n')
+                else:
+                    leaderboard[str(message.author.id)] = output_str.count('\n')
+                f.seek(0)
+                f.write(json.dumps(leaderboard))
+                if output_str.count('\n') == 0:
+                    await output_channel.send(f'### <@{message.author.id}> Thanks, but those codes have been submitted already! <a:eeveeslap:1352484159485902859>', silent=True)
+                elif len(results) == output_str.count('\n'):
+                    new_msg = await output_channel.send(f'## <:espfetti:1350942179522121891> Thank you <@{message.author.id}> for submitting {output_str.count('\n')} codes! <a:sylvekiss:1364084379726643262>\n### Your total: {leaderboard[str(message.author.id)]} codes <a:sylvesip_gif:1364082945811288115>{output_str}', silent=True)
+                    message_ids[(message.channel.id, message.id)] = [(output_channel.id, new_msg.id)]
+                    message_ids_rev[message_ids[(message.channel.id, message.id)][-1]] = (message.channel.id, message.id)
+                else:
+                    new_msg = await output_channel.send(f'## <:espfetti:1350942179522121891> Thank you <@{message.author.id}> for submitting {len(results)} codes! <a:sylvekiss:1364084379726643262>\n### But {len(results)-output_str.count('\n')} codes were submitted already <a:leafeongiggle:1352483452376711249>\n ### Your total: {leaderboard[str(message.author.id)]} codes <a:sylvesip_gif:1364082945811288115>{output_str}', silent=True)
+                    message_ids[(message.channel.id, message.id)] = [(output_channel.id, new_msg.id)]
+                    message_ids_rev[message_ids[(message.channel.id, message.id)][-1]] = (message.channel.id, message.id)
+                logger.info(f'{len(results)} QR codes detected from {message.author.display_name} (Total: {leaderboard[str(message.author.id)]})')
+            logger.info(f'{output_str.count('\n')} codes sent to {output_channel}')
 
-        #####################################################
-        ###             SUCCESS CHANNEL FORWARDING
-        #####################################################
-        if message.channel.id in [success_prem_id] and message.type == discord.MessageType.default and not message.thread and message.attachments and (not message.reference or message.reference.type != discord.MessageReferenceType.forward):
+    #####################################################
+    ###             CONTENTS CHANNEL FORWARDING
+    #####################################################
+    if message.channel.id in [contents_deals_id, contents_prem_id] and message.type == discord.MessageType.default and not message.thread:
+        if message.author.id in [taiyaki_id, sora_id]: #taiyaki, sora
             output_channel = channels[message.channel]
+            content = ''
+            if message.attachments and not message.content.startswith('## '):
+                content='## ' + message.content
+                await message.channel.send(content=content, embeds=message.embeds, files=[await attachment.to_file() for attachment in message.attachments])#, allowed_mentions=discord.AllowedMentions(everyone=False,users=False,roles=False), silent=True)
+                await message.delete()
+            await output_channel.send(content=content, embeds=message.embeds, files=[await attachment.to_file() for attachment in message.attachments])#, allowed_mentions=discord.AllowedMentions(everyone=False,users=False,roles=False), silent=True)
             logger.info('----------------------------------------------------------------------')
             logger.info(f'Received msg from {message.author.display_name} in {message.channel}')
-            logger.info('----------------------------------------------------------------------')
-            message_ids[(message.channel.id, message.id)] = []
-            await asyncio.sleep(120)        # wait 2 minutes before posting
-
-            try:
-                _ = await message.channel.fetch_message(message.id)
-            except Exception as e:
-                logger.info('----------------------------------------------------------------------')
-                logger.info(f'Success from {message.author.display_name} deleted, aborting forwarded message')
-                logger.info('----------------------------------------------------------------------\n\n')
-                return
-
-            if (message.channel.id, message.id) in message_ids:     #if message hasn't been deleted
-                async with aiohttp.ClientSession() as session:
-                    webhook = discord.Webhook.from_url(success_webhook, session=session)
-                    new_msg = await webhook.send(content=message.content, embeds=message.embeds, files=[await attachment.to_file() for attachment in message.attachments], username="Gotta Ping 'Em All", avatar_url=pfp_url, allowed_mentions=discord.AllowedMentions(everyone=False,users=False,roles=False), wait=True)
-                message_ids[(message.channel.id, message.id)] = [(output_channel.id, new_msg.id)]
-                message_ids_rev[message_ids[(message.channel.id, message.id)][-1]] = (message.channel.id, message.id)
-                logger.info('----------------------------------------------------------------------')
-                logger.info(f'Forwarding msg from {message.author.display_name} to {output_channel}')
-                logger.info('----------------------------------------------------------------------\n\n')
-
-        #####################################################
-        ###          PANDA DEALS FORWARDING (to 2nd server)
-        #####################################################
-        if message.channel.id in [panda_anime_input_id] and message.type == discord.MessageType.default and not message.thread and message.embeds:
-            logger.info('----------------------------------------------------------------------')
-            logger.info(f'Received Amazon deal in {message.channel}')
-            output_channel = panda_anime_output_channel
-            embeds = []
-            for embed in message.embeds:
-                embed_dict = embed.to_dict()
-                logger.info('')
-                logger.info(embed_dict)
-                logger.info('')
-                item_sku = ''
-                for i in range(len(embed_dict['fields'])):
-                    if embed_dict['fields'][i]['name'] == 'SKU':
-                        item_sku = embed_dict['fields'][i]['value']
-                    elif embed_dict['fields'][i]['name'] in ['Add to cart', 'ATC']:
-                        atc_link = re.sub(r'&tag=[A-Za-z0-9-]*', '&'+ref_tag, embed_dict['fields'][i]['value'])
-                        if ref_tag not in atc_link:
-                            atc_link = atc_link[:-1] + '&'+ref_tag + ')'
-                        embed_dict['fields'][i]['value'] = atc_link
-                if 'www.amazon.com' in embed_dict['url'] and item_sku:
-                    embed_dict['url'] = 'https://www.amazon.com/dp/' + item_sku + '?'+ref_tag
-                    embeds.append(discord.Embed.from_dict(embed_dict))
-                else:
-                    embeds.append(discord.Embed.from_dict(embed_dict))
-
-            await output_channel.send('', embeds=embeds)
-            logger.info(f'Forwarding Amazon deal to {output_channel}')
+            logger.info(f'Forwarding msg to {output_channel}')
             logger.info('----------------------------------------------------------------------\n\n')
 
-        ##############################################
-        ###             LINKS ONLY FORWARDING
-        ###############################################
-        # elif message.channel.id in [links_deals_id, jigglytest_1] and message.type == discord.MessageType.default and not message.thread:
-        #     if 'https://' in message.content or message.role_mentions:
-        #         if any(domain in message.content for domain in whitelisted_domains) or any(role in message.author.roles for role in mod_roles):
-        #             await forward_link(logger, channels[message.channel], message)
+    #####################################################
+    ###             SUCCESS CHANNEL FORWARDING
+    #####################################################
+    if message.channel.id in [success_prem_id] and message.type == discord.MessageType.default and not message.thread and message.attachments and (not message.reference or message.reference.type != discord.MessageReferenceType.forward):
+        output_channel = channels[message.channel]
+        logger.info('----------------------------------------------------------------------')
+        logger.info(f'Received msg from {message.author.display_name} in {message.channel}')
+        logger.info('----------------------------------------------------------------------')
+        message_ids[(message.channel.id, message.id)] = []
+        await asyncio.sleep(120)        # wait 2 minutes before posting
 
-        #premium links only
-        elif message.channel.id in [links_prem_id]:
-             if 'https://' in message.content or message.role_mentions:
-                 if any(domain in message.content for domain in whitelisted_domains) or any(role in message.author.roles for role in mod_roles):
-                     await forward_link_embed(client, logger, channels[message.channel], message, '')
+        try:
+            _ = await message.channel.fetch_message(message.id)
+        except Exception as e:
+            logger.info('----------------------------------------------------------------------')
+            logger.info(f'Success from {message.author.display_name} deleted, aborting forwarded message')
+            logger.info('----------------------------------------------------------------------\n\n')
+            return
 
-        #links only + test channel
-        elif message.channel.id in [links_deals_id]:
-            if ('https://' in message.content and 'https://tenor.com' not in message.content) or message.role_mentions:
-                if any(domain in message.content for domain in whitelisted_domains) or any(role in message.author.roles for role in mod_roles):
-                    # filter out overpriced posters
-                    if not any(role in message.author.roles for role in mod_roles) and 'target.com' in message.content and any(item in message.content for item in over_msrp):
-                        await message.delete()
-                        await client.get_channel(target_id).send(f'### <@{message.author.id}> Please check MSRP before you post!')
-                        return
+        if (message.channel.id, message.id) in message_ids:     #if message hasn't been deleted
+            async with aiohttp.ClientSession() as session:
+                webhook = discord.Webhook.from_url(success_webhook, session=session)
+                new_msg = await webhook.send(content=message.content, embeds=message.embeds, files=[await attachment.to_file() for attachment in message.attachments], username="Gotta Ping 'Em All", avatar_url=pfp_url, allowed_mentions=discord.AllowedMentions(everyone=False,users=False,roles=False), wait=True)
+            message_ids[(message.channel.id, message.id)] = [(output_channel.id, new_msg.id)]
+            message_ids_rev[message_ids[(message.channel.id, message.id)][-1]] = (message.channel.id, message.id)
+            logger.info('----------------------------------------------------------------------')
+            logger.info(f'Forwarding msg from {message.author.display_name} to {output_channel}')
+            logger.info('----------------------------------------------------------------------\n\n')
 
-                    msg_to_forward = await remove_tracking(logger, message.channel, message)
-                    await forward_link_embed(client, logger, channels[message.channel], msg_to_forward, '')
-                    # hardcoded panda link forwarding
-                    # (easiest implementation without changing everything else)
-                    if ('https://' in message.content and 'https://tenor.com' not in message.content):
-                        await forward_link_embed(client, logger, panda_links_channel, msg_to_forward, '')
+    #####################################################
+    ###          PANDA DEALS FORWARDING (to 2nd server)
+    #####################################################
+    # if message.channel.id in [panda_anime_input_id] and message.type == discord.MessageType.default and not message.thread and message.embeds:
+    #     logger.info('----------------------------------------------------------------------')
+    #     logger.info(f'Received Amazon deal in {message.channel}')
+    #     output_channel = panda_anime_output_channel
+    #     embeds = []
+    #     for embed in message.embeds:
+    #         embed_dict = embed.to_dict()
+    #         logger.info('')
+    #         logger.info(embed_dict)
+    #         logger.info('')
+    #         item_sku = ''
+    #         for i in range(len(embed_dict['fields'])):
+    #             if embed_dict['fields'][i]['name'] == 'SKU':
+    #                 item_sku = embed_dict['fields'][i]['value']
+    #             elif embed_dict['fields'][i]['name'] in ['Add to cart', 'ATC']:
+    #                 atc_link = re.sub(r'&tag=[A-Za-z0-9-]*', '&'+ref_tag, embed_dict['fields'][i]['value'])
+    #                 if ref_tag not in atc_link:
+    #                     atc_link = atc_link[:-1] + '&'+ref_tag + ')'
+    #                 embed_dict['fields'][i]['value'] = atc_link
+    #         if 'www.amazon.com' in embed_dict['url'] and item_sku:
+    #             embed_dict['url'] = 'https://www.amazon.com/dp/' + item_sku + '?'+ref_tag
+    #             embeds.append(discord.Embed.from_dict(embed_dict))
+    #         else:
+    #             embeds.append(discord.Embed.from_dict(embed_dict))
+    #
+    #     await output_channel.send('', embeds=embeds)
+    #     logger.info(f'Forwarding Amazon deal to {output_channel}')
+    #     logger.info('----------------------------------------------------------------------\n\n')
+
+    ##############################################
+    ###             LINKS ONLY FORWARDING
+    ###############################################
+    # elif message.channel.id in [links_deals_id, jigglytest_1] and message.type == discord.MessageType.default and not message.thread:
+    #     if 'https://' in message.content or message.role_mentions:
+    #         if any(domain in message.content for domain in whitelisted_domains) or any(role in message.author.roles for role in mod_roles):
+    #             await forward_link(logger, channels[message.channel], message)
+
+    #premium links only
+    elif message.channel.id in [links_prem_id]:
+         if 'https://' in message.content or message.role_mentions:
+             if any(domain in message.content for domain in whitelisted_domains) or any(role in message.author.roles for role in mod_roles):
+                 await forward_link_embed(client, logger, channels[message.channel], message, '')
+
+    #links only + test channel
+    elif message.channel.id in [links_deals_id]:
+        if ('https://' in message.content and 'https://tenor.com' not in message.content) or message.role_mentions:
+            if any(domain in message.content for domain in whitelisted_domains) or any(role in message.author.roles for role in mod_roles):
+                # filter out overpriced posters
+                if not any(role in message.author.roles for role in mod_roles) and 'target.com' in message.content and any(item in message.content for item in over_msrp):
+                    await message.delete()
+                    await client.get_channel(target_id).send(f'### <@{message.author.id}> Please check MSRP before you post!')
+                    return
+
+                msg_to_forward = await remove_tracking(logger, message.channel, message)
+                await forward_link_embed(client, logger, channels[message.channel], msg_to_forward, '')
+                # hardcoded panda link forwarding
+                # (easiest implementation without changing everything else)
+                if ('https://' in message.content and 'https://tenor.com' not in message.content):
+                    await forward_link_embed(client, logger, panda_links_channel, msg_to_forward, '')
 
 
 ##############################################
@@ -1060,16 +1103,18 @@ async def on_reaction_add(reaction, user):
                     except (NameError, KeyError, AttributeError):
                         pass
 
+
     ##############################################
     ###             REACTION LOGGING
     ###############################################
-    async with aiofiles.open('../react_logs/log.json', 'a', encoding="utf-8") as f:
-        output_str = ''
-        if isinstance(reaction.emoji, str):
-            output_str = '{"react": "' + reaction.emoji + '", "name": "' + str(user.display_name) + '", "username": "' + user.name + '", "time": "' + str(datetime.datetime.now().replace(microsecond=0)) + '", "user_id": '+ str(user.id) + ', "guild": ' + str(reaction.message.channel.guild) + ', "channel": ' + str(reaction.message.channel) + ', "message_url": ' + str(reaction.message.jump_url) + '}\n'
-        else:
-            output_str = '{"react": "' + reaction.emoji.name + '", "name": "' + str(user.display_name) + '", "username": "' + user.name +  '", "time": "' + str(datetime.datetime.now().replace(microsecond=0)) + '", "user_id": '+ str(user.id) + ', "guild": ' + str(reaction.message.channel.guild) + ', "channel": ' + str(reaction.message.channel) + ', "message_url": ' + str(reaction.message.jump_url) + '}\n'
-        await f.write(output_str)
+    if reaction.message.guild.id in [jiggly_id, panda_id]:
+        async with aiofiles.open('../react_logs/log.json', 'a', encoding="utf-8") as f:
+            output_str = ''
+            if isinstance(reaction.emoji, str):
+                output_str = '{"react": "' + reaction.emoji + '", "name": "' + str(user.display_name) + '", "username": "' + user.name + '", "time": "' + str(datetime.now().replace(microsecond=0)) + '", "user_id": '+ str(user.id) + ', "guild": ' + str(reaction.message.channel.guild) + ', "channel": ' + str(reaction.message.channel) + ', "message_url": ' + str(reaction.message.jump_url) + '}\n'
+            else:
+                output_str = '{"react": "' + reaction.emoji.name + '", "name": "' + str(user.display_name) + '", "username": "' + user.name +  '", "time": "' + str(datetime.now().replace(microsecond=0)) + '", "user_id": '+ str(user.id) + ', "guild": ' + str(reaction.message.channel.guild) + ', "channel": ' + str(reaction.message.channel) + ', "message_url": ' + str(reaction.message.jump_url) + '}\n'
+            await f.write(output_str)
 
 
 
@@ -1094,9 +1139,9 @@ async def on_presence_update(before, after):
 #     async with aiofiles.open('../react_logs/log.json', 'a', encoding="utf-8") as f:
 #         output_str = ''
 #         if isinstance(reaction.emoji, str):
-#             output_str = '{"react": "' + reaction.emoji + ' - DEL", "nickname": "' + str(user.nick) + '", "username": "' + user.name + '", "time": "' + str(datetime.datetime.now().replace(microsecond=0)) + '", "user_id": '+ str(user.id) + ', "guild": ' + str(message.channel.guild) + ', "channel": ' + str(reaction.message.channel) + ', "message_id": ' + str(reaction.message.id) + '}\n'
+#             output_str = '{"react": "' + reaction.emoji + ' - DEL", "nickname": "' + str(user.nick) + '", "username": "' + user.name + '", "time": "' + str(datetime.now().replace(microsecond=0)) + '", "user_id": '+ str(user.id) + ', "guild": ' + str(message.channel.guild) + ', "channel": ' + str(reaction.message.channel) + ', "message_id": ' + str(reaction.message.id) + '}\n'
 #         else:
-#             output_str = '{"react": "' + reaction.emoji.name + ' - DEL", "nickname": "' + str(user.nick) + '", "username": "' + user.name +  '", "time": "' + str(datetime.datetime.now().replace(microsecond=0)) + '", "user_id": '+ str(user.id) + ', "guild": ' + str(message.channel.guild) + ', "channel": ' + str(reaction.message.channel) + ', "message_id": ' + str(reaction.message.id) + '}\n'
+#             output_str = '{"react": "' + reaction.emoji.name + ' - DEL", "nickname": "' + str(user.nick) + '", "username": "' + user.name +  '", "time": "' + str(datetime.now().replace(microsecond=0)) + '", "user_id": '+ str(user.id) + ', "guild": ' + str(message.channel.guild) + ', "channel": ' + str(reaction.message.channel) + ', "message_id": ' + str(reaction.message.id) + '}\n'
 #         await f.write(output_str)
 
 

@@ -5,7 +5,7 @@ import regex as re
 import aiofiles
 import asyncio
 import json
-import datetime
+from datetime import datetime
 import time
 from dateutil.parser import parse
 from dateutil.tz import gettz
@@ -14,7 +14,7 @@ from urllib.parse import urljoin, urlparse
 from playsound import playsound
 from win32api import keybd_event
 from win32con import VK_MEDIA_PLAY_PAUSE, KEYEVENTF_EXTENDEDKEY
-# import pyautogui
+from deep_translator import GoogleTranslator
 
 from jigglyglobals import *
 
@@ -27,17 +27,12 @@ async def play_sound_async(file_path):
     await asyncio.to_thread(playsound, file_path)
 
 async def toggle_media_async():
-    # await asyncio.to_thread(pyautogui.keyDown, 'alt')
-    # await asyncio.sleep(.05)
-    # pyautogui.press('tab')
-    # time.sleep(.2)
-    # pyautogui.keyUp('alt')
     await asyncio.to_thread(keybd_event, VK_MEDIA_PLAY_PAUSE, 0, KEYEVENTF_EXTENDEDKEY, 0)
-    await asyncio.sleep(.05)
+    await asyncio.sleep(.1)
     await asyncio.to_thread(keybd_event, VK_MEDIA_PLAY_PAUSE, 0, KEYEVENTF_EXTENDEDKEY, 0)
 
 async def send_message(logger, output_channel, message):
-    output_msg = await output_channel.send(message.content[len(str(output_channel.id))+6:])
+    output_msg = await output_channel.send(message.content[len(str(output_channel.id))+6:], files=[await attachment.to_file() for attachment in message.attachments])
     await message.channel.send('Sending msg to channel: ' + output_msg.jump_url)
     logger.info('----------------------------------------------------------------------')
     logger.info(f'Sending msg to channel: {output_channel}')
@@ -93,7 +88,7 @@ async def botscan(logger, guild, message):
                     else:
                         activities.append({activity.name: 'unknown id'})
                 if activities:
-                    output_str = '{"activities": ' + json.dumps(activities) + ', "name": "' + str(member.display_name) + '", "username": "' + member.name + '", "user_id": ' + str(member.id) + '", "timestamp": ' + str(datetime.datetime.now().replace(microsecond=0)) + '}\n'
+                    output_str = '{"activities": ' + json.dumps(activities) + ', "name": "' + str(member.display_name) + '", "username": "' + member.name + '", "user_id": ' + str(member.id) + '", "timestamp": ' + str(datetime.now().replace(microsecond=0)) + '}\n'
                     await f.write(output_str)
                     msg = f'### <@{member.id}> currently running {[next(iter(activity)) for activity in activities]}'
                     for activity in activities:
@@ -227,7 +222,7 @@ async def log_message(client, logger, output_channel, message, type):
             "description": f'**Bulk deletion in <#{payload.channel_id}>, deleted {len(payload.message_ids)} messages**\n',
             "flags": 0,
             "color": 15049215, # hex code 0xe5a1ff
-            "timestamp": str(datetime.datetime.now(timezone)),
+            "timestamp": str(datetime.now(timezone)),
             "type": "rich"
         }
         embed=discord.Embed.from_dict(embed_dict)
@@ -252,7 +247,7 @@ async def log_message(client, logger, output_channel, message, type):
         },
         "flags": 0,
         "color": 15049215, # hex code 0xe5a1ff
-        "timestamp": str(datetime.datetime.now(timezone)),
+        "timestamp": str(datetime.now(timezone)),
         "type": "rich"
     }
     if type == 'bulk':
@@ -291,7 +286,7 @@ async def botter_alert(logger, member):
         else:
             activities.append({activity.name: 'unknown id'})
     if activities:
-        output_str = '{"activities": ' + json.dumps(activities) + ', "name": "' + str(member.display_name) + '", "username": "' + member.name + '", "user_id": ' + str(member.id) + '", "timestamp": ' + str(datetime.datetime.now().replace(microsecond=0)) + '}\n'
+        output_str = '{"activities": ' + json.dumps(activities) + ', "name": "' + str(member.display_name) + '", "username": "' + member.name + '", "user_id": ' + str(member.id) + '", "timestamp": ' + str(datetime.now().replace(microsecond=0)) + '}\n'
         logger.info('----------------------------------------------------------------------')
         if member.id in botter_detection_count:
             botter_detection_count[member.id] += 1
@@ -413,7 +408,7 @@ async def generate_embed_msg(client, logger, output_channel, message, msg_str, e
         "thumbnail": ({'url':message.embeds[0].thumbnail.url} if message.embeds and message.embeds[0].thumbnail else None),
         "color": (message.embeds[0].color.value if message.embeds and message.embeds[0].color else 15049215),
         "flags": 0,
-        "timestamp": str(datetime.datetime.now(timezone)),
+        "timestamp": str(datetime.now(timezone)),
         "type": "rich"
     }
     # panda_links_channel = client.get_channel(panda_links_id)
@@ -481,4 +476,55 @@ async def print_leaderboard(client, logger, message, channel):
                     continue
                 pass
     await channel.send(output_str+'\n```')
+    logger.info('----------------------------------------------------------------------')
+
+async def translate_tweet(logger, message, channel):
+    embeds = []
+    en_content = ''
+    for embed in message.embeds:
+        embed_dict = embed.to_dict()
+        logger.info('')
+        logger.info(embed_dict)
+        logger.info('')
+
+        if 'title' in embed_dict:
+            embed_dict['title'] = GoogleTranslator(source='ja', target='en').translate(embed_dict['title'])
+        if 'description' in embed_dict:
+            words = embed_dict['description'].split('[#')
+            if len(words) > 1:
+                last_words = words[-1].split(')')
+                words[-1] = last_words[0] + ')'
+                words.append(last_words[1])
+
+            embed_dict['description'] = GoogleTranslator(source='ja', target='en').translate(words[0]) + ' '
+            en_content += f'{embed_dict["description"]}\n\n'
+            if words[0].endswith('\n\n'):
+                embed_dict['description'] += '\n\n'
+            for word in words[1:-1]:
+                embed_dict['description'] += '[#' + word
+            if len(words) > 1:
+                if words[-1].startswith('\n\n'):
+                    embed_dict['description'] += '\n\n'
+                embed_dict['description'] += ' ' + GoogleTranslator(source='ja', target='en').translate(words[-1])
+        if 'footer' in embed_dict:
+            embed_dict['footer']['text'] = 'Translated by Jigglybot | ' + embed_dict['footer']['text'].replace('Monitors v2.0.0 | ', '')
+        else:
+            embed_dict['footer'] = {'text': 'Translated by Jigglybot'}
+        if 'author' in embed_dict:
+            embed_dict['author']['name'] = GoogleTranslator(source='ja', target='en').translate(embed_dict['author']['name'])
+        else:
+            embed_dict['author'] = {'name': GoogleTranslator(source='ja', target='en').translate(message.author.display_name)}
+
+
+        if 'fields' in embed_dict:
+            for field in embed_dict['fields']:
+                field['name'] = GoogleTranslator(source='ja', target='en').translate(field['name'])
+                field['value'] = GoogleTranslator(source='ja', target='en').translate(field['value'])
+                en_content += f'### {field['name']}\n{field['value']}\n\n'
+
+        embeds.append(discord.Embed.from_dict(embed_dict))
+    # en_content = GoogleTranslator(source='ja', target='en').translate(message.content)
+    await channel.send(f'-# Translated from {message.jump_url}\n\n{en_content}', embeds=embeds)
+    logger.info('----------------------------------------------------------------------')
+    logger.info(f'Translating message from {message.channel} to {channel}')
     logger.info('----------------------------------------------------------------------')
