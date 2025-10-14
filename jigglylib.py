@@ -15,6 +15,7 @@ from playsound import playsound
 from win32api import keybd_event
 from win32con import VK_MEDIA_PLAY_PAUSE, KEYEVENTF_EXTENDEDKEY
 from deep_translator import GoogleTranslator
+from copy import deepcopy
 
 from jigglyglobals import *
 
@@ -274,7 +275,7 @@ async def log_message(client, logger, output_channel, message, type):
         await output_channel.send(embed=embed)
 
 
-async def botter_alert(logger, member):
+async def botter_alert(logger, member, id_match):
     # to avoid spam
     if member.id in botter_detection_count and botter_detection_count[member.id] >= 2:
         return
@@ -294,7 +295,10 @@ async def botter_alert(logger, member):
             botter_detection_count[member.id] = 1
 
         for channel in bot_channels:
-            msg = f'### {' '.join(['<@' + str(id) + '>' for id in bot_mentions[channel.id]])} Potential botter found in {member.guild.name}! <@{str(member.id)}> currently running {[next(iter(activity)) for activity in activities]}'
+            if id_match:
+                msg = f'### {' '.join(['<@' + str(id) + '>' for id in bot_mentions[channel.id]])} Potential botter found in {member.guild.name}! <@{str(member.id)}> currently running {[next(iter(activity)) for activity in activities]}\n### (matched by App ID - confirmed botter)'
+            else:
+                msg = f'### {' '.join(['<@' + str(id) + '>' for id in bot_mentions[channel.id]])} Potential botter found in {member.guild.name}! <@{str(member.id)}> currently running {[next(iter(activity)) for activity in activities]}\n### (matched by App Name - check for false positive)'
             for activity in activities:
                 if hasattr(activity, 'assets'):
                     if activity['assets']['small_image_url']:
@@ -528,3 +532,29 @@ async def translate_tweet(logger, message, channel):
     logger.info('----------------------------------------------------------------------')
     logger.info(f'Translating message from {message.channel} to {channel}')
     logger.info('----------------------------------------------------------------------')
+
+async def bot_checkout_alert(logger, embed_dict, output_channel, item_name, item_url, price, pokemon_center):
+    embed_dict['fields'] = []
+    embed_dict['title'] = item_name
+    embed_dict['url'] = item_url
+    embed_dict['color'] = 15049215
+    embed_dict['author'] = deepcopy(checkout_alerts_author)
+    embed_dict['footer'] = deepcopy(checkout_alerts_footer)
+
+    if pokemon_center:
+        embed_dict['fields'].append({"value":'Unknown',"name":"Price","inline":"true"})
+        embed_dict['fields'].append({"value":pokemon_center,"name":"Site","inline":"true"})
+        if item_url:
+            embed_dict['fields'].append({"value":item_url,"name":"URL","inline":"true"})
+        else:
+            embed_dict['fields'].append({"value":'Unknown Item',"name":"URL","inline":"true"})
+        if not item_name:
+            embed_dict['title'] = 'Unknown Item'
+        await output_channel.send(embed=discord.Embed.from_dict(embed_dict))
+        return
+
+    else:
+        embed_dict['fields'].append({"value":item_url,"name":"URL","inline":"true"})
+        embed_dict['fields'].append({"value":price,"name":"Price","inline":"true"})
+        await output_channel.send(embed=discord.Embed.from_dict(embed_dict))
+        return

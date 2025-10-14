@@ -16,6 +16,7 @@ from typing import Optional
 from win32api import keybd_event
 from win32con import VK_ESCAPE, KEYEVENTF_EXTENDEDKEY
 import webbrowser
+from dateutil import parser
 
 
 
@@ -107,8 +108,10 @@ async def on_ready():
 
     global panda_bot_checkouts_channel
     global panda_checkout_alerts_channel
+    global jiggly_checkout_alerts_channel
     panda_bot_checkouts_channel = client.get_channel(panda_bot_checkouts_id)
     panda_checkout_alerts_channel = client.get_channel(panda_checkout_alerts_id)
+    jiggly_checkout_alerts_channel = client.get_channel(jiggly_checkout_alerts_id)
 
     for (guild, channel) in archive_channel_ids.items():
         archive_channels[guild] = client.get_channel(channel)
@@ -162,6 +165,9 @@ async def on_ready():
     if panda_jp_tweets_channel:
         logger.info(f'Translating tweets from {panda_jp_tweets_channel.guild} - {panda_jp_tweets_channel} to {panda_jp_tweets_output_channel.guild} - {panda_jp_tweets_output_channel}')
         logger.info('')
+    if panda_checkout_alerts_channel:
+        logger.info(f'Sending bot checkout alerts to {panda_checkout_alerts_channel}')
+        logger.info('')
     for command in (await tree.fetch_commands(guild=discord.Object(id=panda_id))):
         logger.info('')
         logger.info(f'Command {command.name} loaded in {command.guild}')
@@ -205,12 +211,17 @@ async def slab_alert(interaction: discord.Interaction, keyword: str, grades: Opt
             if not items[keyword]:
                 del items[keyword]
 
-        output_str = ''
+        output_strs = ['']
         for keyword in items.keys():
             nickname = ' (nickname: ' + items[keyword]['nickname'] + ')' if items[keyword]['nickname'] else ''
-            output_str += f'### [{keyword}]{nickname} - Grades: {items[keyword]['grades']}\n'
+            temp_str = output_strs[-1] + f'### [{keyword}]{nickname} - Grades: {items[keyword]['grades']}\n'
+            if len(temp_str) > 2000:
+                output_strs.append(f'### [{keyword}]{nickname} - Grades: {items[keyword]['grades']}\n')
+            else:
+                output_strs[-1] += f'### [{keyword}]{nickname} - Grades: {items[keyword]['grades']}\n'
         await interaction.response.send_message(f'### Sending list of current alerts, check your DMs')
-        await interaction.user.send(output_str)
+        for output_str in output_strs:
+            await interaction.user.send(output_str)
         logger.info('----------------------------------------------------------------------')
         logger.info(f'Sending list of current alerts to {interaction.user}')
         logger.info('----------------------------------------------------------------------\n\n')
@@ -279,6 +290,7 @@ async def on_message(message):
     global slab_alarm
     global last_tweet_ts
     global checkout_log
+    global checkout_active_alerts
     if message.author == client.user:           # ignore self just in case
         return
 
@@ -530,14 +542,73 @@ async def on_message(message):
     #####################################################
     ###                 BOT CHECKOUT ALERTS
     #####################################################
-    elif message.channel.id in [panda_bot_checkouts_channel]:
+    elif message.channel.id in [panda_bot_checkouts_id]:
+        curr_ts = datetime.now()
+        output_channels = [panda_checkout_alerts_channel, jiggly_checkout_alerts_channel]
         for embed in message.embeds:
+            item_url = ''
+            item_name = ''
+            price = ''
+            pokemon_center = ''
+            time = None
             embed_dict = embed.to_dict()
             for field in embed_dict['fields']:
-                if field['name'] == 'Product'
-                    item_url = field['url']
-            if not 
-            checkout_log[item_url]
+                if field['name'] == "Site":
+                    if 'Pokemon Center' in field['value']:
+                        pokemon_center = field['value']
+            if pokemon_center:
+                if field['name'] == 'Product':
+                    words = field['value'].split(')')
+                    item_name = words[1][1:] + ')'
+                    item_url = 'https://www.pokemoncenter.com/product/' + words[0].strip('()')
+                    price = 'Unknown'
+            else:
+                for field in embed_dict['fields']:
+                    if field['name'] == 'Product':
+                        words = field['value'].split('](')
+                        item_name = words[0].strip('[]')
+                        item_url = words[1].strip('()')
+                    if field['name'] == 'Price':
+                        price = field['value']
+                    if field['name'] == 'Checkout Time':
+                        time = parser.parse(field['value'])
+
+            ########################################################
+            # if alert is too old (due to backlog), ignore the alert
+            #########################################################
+            if curr_ts - (time - timedelta(hours=3)) > timedelta(seconds=checkout_ignore_after_sec):
+                continue
+
+            if item_url not in checkout_log:
+                checkout_log[item_url] = []
+            checkout_log[item_url].append(curr_ts)
+            if len(checkout_log[item_url]) > checkout_num:
+                first_checkout = checkout_log[item_url].pop(0)
+                if curr_ts < first_checkout + timedelta(seconds=checkout_window_duration):
+                    if item_url not in checkout_active_alerts:
+                        checkout_active_alerts.append(item_url)
+                        logger.info('--------------------------------------------------------')
+                        for output_channel in output_channels:
+                            logger.info(f'Bot checkouts detected, forwarding to {output_channel}:')
+                            await bot_checkout_alert(logger, embed_dict, output_channel, item_name, item_url, price, pokemon_center)
+                        logger.info(f'{item_name}  --  {item_url}')
+                        logger.info(embed_dict)
+                        logger.info('')
+                        logger.info(f'Active Alerts: {checkout_active_alerts}')
+                        logger.info('--------------------------------------------------------\n\n')
+
+        new_active_alerts = []
+        for item_url in checkout_active_alerts:
+            last_checkout = checkout_log[item_url][-1]
+            if curr_ts < last_checkout + timedelta(seconds=checkout_timeout_duration):
+                new_active_alerts.append(item_url)
+        if len(checkout_active_alerts) != len(new_active_alerts):
+            logger.info('--------------------------------------------------------')
+            logger.info('Deactivating Alert')
+            logger.info(f'Before: {checkout_active_alerts}')
+            logger.info(f'After: {new_active_alerts}')
+            logger.info('--------------------------------------------------------\n\n')
+        checkout_active_alerts = deepcopy(new_active_alerts)
 
 
 
@@ -760,6 +831,10 @@ async def on_message(message):
             channel = client.get_channel(923724313742434304)
             msg = await channel.fetch_message(1420500927344939058)
             await channel.send(embeds=msg.embeds)
+
+        elif message.content == '!watermark':
+            for embed in message.embeds:
+
 
 
     ######################################################################
@@ -1124,9 +1199,12 @@ async def on_reaction_add(reaction, user):
 @client.event
 async def on_presence_update(before, after):
     member = after
-    if member.activities and member.id not in whitelisted_users and (any((bot_name in activity.name.lower() and all(app_name not in activity.name.lower() for app_name in whitelisted_apps)) for activity in list(member.activities) for bot_name in bot_names)
-    or any((hasattr(activity, 'application_id') and bot_id == activity.application_id) for activity in list(member.activities) for bot_id in bot_ids)):
-        await botter_alert(logger, member)
+    if member.activities and member.id not in whitelisted_users:
+        if any((bot_name in activity.name.lower() and all(app_name not in activity.name.lower() for app_name in whitelisted_apps)) for activity in list(member.activities) for bot_name in bot_names):
+            await botter_alert(logger, member, False)
+        elif any((hasattr(activity, 'application_id') and bot_id == activity.application_id) for activity in list(member.activities) for bot_id in bot_ids):
+            await botter_alert(logger, member, True)
+
 
 ###########################################################
 #####           NON FUNCTIONAL (REACTION DELETION LOGS)
